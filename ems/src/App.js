@@ -62,7 +62,7 @@ function App() {
       case 'home':
         return <Home events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
       case 'about':
-        return <About setPage={setPage} />; // ✅ Fixed: Only one 'about' case with setPage
+        return <About setPage={setPage} />;
       case 'events':
         return <Events events={events} addEvent={addEvent} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
       case 'contact':
