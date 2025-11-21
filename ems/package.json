@@ -1,7 +1,8 @@
 {
-  "name": "firstapp",
+  "name": "ems",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://abdualla-cs.github.io/Event-Management-System",
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-beta.4",
     "@emotion/react": "^11.14.0",
@@ -28,7 +29,9 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build"
   },
   "overrides": {
     "react": "$react",
