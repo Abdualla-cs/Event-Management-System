@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ToastProvider, AuthProvider } from './context/Providers.js';
-import { initialEventsData } from './data/initialEvents.js';
+import { initialEventsData, DATA_VERSION } from './data/initialEvents.js';
 import useLocalStorage from './hooks/useLocalStorage.js';
 import Header from './components/Header.js';
 import Footer from './components/Footer.js';
@@ -17,10 +17,19 @@ import LoginModal from './components/LoginModal.js';
 
 function App() {
   const [events, setEvents] = useLocalStorage('events', initialEventsData);
+  const [dataVersion, setDataVersion] = useLocalStorage('dataVersion', '');
   const [page, setPage] = useState('home');
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+
+  useEffect(() => {
+    if (dataVersion !== DATA_VERSION) {
+      console.log('Updating data to version:', DATA_VERSION);
+      setEvents(initialEventsData);
+      setDataVersion(DATA_VERSION);
+    }
+  }, [dataVersion, setEvents, setDataVersion]);
 
   const addEvent = (newEvent) => {
     const eventWithId = {
