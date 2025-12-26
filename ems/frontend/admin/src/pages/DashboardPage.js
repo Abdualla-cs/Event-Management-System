@@ -77,8 +77,8 @@ function DashboardPage({ events }) {
                                 </p>
                             </div>
                             <span className={`px-2 py-1 rounded-full text-xs ${new Date(event.date) >= new Date()
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-gray-100 text-gray-800'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-gray-100 text-gray-800'
                                 }`}>
                                 {new Date(event.date) >= new Date() ? 'Upcoming' : 'Past'}
                             </span>
