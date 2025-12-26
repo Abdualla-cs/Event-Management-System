@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'; // Add useRef
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import EventCard from '../components/EventCard.js';
 import EventForm from '../components/EventForm.js';
@@ -12,6 +12,7 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
     const [activeTab, setActiveTab] = useState('events');
     const [pendingRequests, setPendingRequests] = useState([]);
     const [loadingRequests, setLoadingRequests] = useState(false);
+    const [loadingActions, setLoadingActions] = useState({}); // For individual request loading states
     const [stats, setStats] = useState({
         totalEvents: 0,
         upcomingEvents: 0,
@@ -58,63 +59,131 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
         setLoadingRequests(true);
         try {
             const token = localStorage.getItem('admin_token');
-            const response = await axios.get(`${API_BASE_URL}/api/events/pending`, {
-                headers: { Authorization: `Bearer ${token}` }
+            if (!token) {
+                alert('Please login first');
+                setLoadingRequests(false);
+                return;
+            }
+
+            console.log('Fetching pending requests from:', `${API_BASE_URL}/api/admin/pending`);
+            const response = await axios.get(`${API_BASE_URL}/api/admin/pending`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
             });
-            setPendingRequests(response.data);
+
+            console.log('Pending events response:', response.data);
+            setPendingRequests(response.data || []);
         } catch (error) {
             console.error('Error fetching pending requests:', error);
+            console.error('Full error:', error.response);
+
+            if (error.response?.status === 401) {
+                alert('Session expired. Please login again.');
+                localStorage.removeItem('admin_token');
+                window.location.reload();
+            } else if (error.response?.status === 404) {
+                alert('Pending events endpoint not found. Please check server configuration.');
+            } else {
+                alert('Failed to load pending requests. Please try again.');
+            }
+            setPendingRequests([]);
         } finally {
             setLoadingRequests(false);
         }
     };
 
     const handleApproveRequest = async (requestId) => {
+        if (!window.confirm('Are you sure you want to approve this event request?')) return;
+
+        setLoadingActions(prev => ({ ...prev, [requestId]: 'approving' }));
+
         try {
             const token = localStorage.getItem('admin_token');
-            await axios.post(`${API_BASE_URL}/api/events/pending/${requestId}/approve`, {}, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const response = await axios.post(
+                `${API_BASE_URL}/api/admin/pending/${requestId}/approve`,
+                {},
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
 
-            setPendingRequests(pendingRequests.filter(req => req.id !== requestId));
-            alert('Event approved successfully!');
+            console.log('Approval response:', response.data);
+
+            setPendingRequests(prev => prev.filter(req => req.id !== requestId));
+
+            if (typeof window.refreshEvents === 'function') {
+                window.refreshEvents();
+            }
+
+            alert('✅ Event approved successfully!');
         } catch (error) {
             console.error('Error approving request:', error);
-            alert('Failed to approve event request.');
+            alert(`❌ Failed to approve event request: ${error.response?.data?.error || error.message}`);
+        } finally {
+            setLoadingActions(prev => ({ ...prev, [requestId]: null }));
         }
     };
 
     const handleRejectRequest = async (requestId) => {
         if (!window.confirm('Are you sure you want to reject this event request?')) return;
 
+        setLoadingActions(prev => ({ ...prev, [requestId]: 'rejecting' }));
+
         try {
             const token = localStorage.getItem('admin_token');
-            await axios.post(`${API_BASE_URL}/api/events/pending/${requestId}/reject`, {}, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.post(
+                `${API_BASE_URL}/api/admin/pending/${requestId}/reject`,
+                {},
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
 
-            setPendingRequests(pendingRequests.filter(req => req.id !== requestId));
-            alert('Event request rejected.');
+            // Remove from pending list
+            setPendingRequests(prev => prev.filter(req => req.id !== requestId));
+
+            alert('✅ Event request rejected.');
         } catch (error) {
             console.error('Error rejecting request:', error);
-            alert('Failed to reject event request.');
+            alert(`❌ Failed to reject event request: ${error.response?.data?.error || error.message}`);
+        } finally {
+            setLoadingActions(prev => ({ ...prev, [requestId]: null }));
         }
     };
 
     const handleDeleteRequest = async (requestId) => {
         if (!window.confirm('Are you sure you want to delete this request?')) return;
 
+        setLoadingActions(prev => ({ ...prev, [requestId]: 'deleting' }));
+
         try {
             const token = localStorage.getItem('admin_token');
-            await axios.delete(`${API_BASE_URL}/api/events/pending/${requestId}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(
+                `${API_BASE_URL}/api/admin/pending/${requestId}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
 
-            setPendingRequests(pendingRequests.filter(req => req.id !== requestId));
-            alert('Request deleted successfully.');
+            setPendingRequests(prev => prev.filter(req => req.id !== requestId));
+
+            alert('✅ Request deleted successfully.');
         } catch (error) {
             console.error('Error deleting request:', error);
-            alert('Failed to delete request.');
+            alert(`❌ Failed to delete request: ${error.response?.data?.error || error.message}`);
+        } finally {
+            setLoadingActions(prev => ({ ...prev, [requestId]: null }));
         }
     };
 
@@ -211,12 +280,17 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
             </div>
 
             {/* Stats */}
-            <section className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+            <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
                 <StatCard label="Total Events" value={stats.totalEvents} color="blue" />
                 <StatCard label="Upcoming Events" value={stats.upcomingEvents} color="green" />
                 <StatCard label="Total Registrations" value={stats.totalRegistrations} color="purple" />
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue}`} color="orange" />
-                <StatCard label="Pending Requests" value={stats.pendingRequests} color="yellow" />
+                <StatCard
+                    label="Pending Requests"
+                    value={stats.pendingRequests}
+                    color="yellow"
+                    className={stats.pendingRequests > 0 ? 'ring-2 ring-yellow-400' : ''}
+                />
             </section>
 
             {/* Tabs */}
@@ -233,8 +307,8 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
                             }, 100);
                         }}
                         className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'events'
-                                ? 'border-[#FC350B] text-[#FC350B]'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            ? 'border-[#FC350B] text-[#FC350B]'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                     >
                         Events
@@ -250,14 +324,14 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
                             }, 100);
                         }}
                         className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'requests'
-                                ? 'border-[#FC350B] text-[#FC350B]'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            ? 'border-[#FC350B] text-[#FC350B]'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                     >
                         Pending Requests
-                        {stats.pendingRequests > 0 && (
+                        {pendingRequests.length > 0 && (
                             <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                {stats.pendingRequests}
+                                {pendingRequests.length}
                             </span>
                         )}
                     </button>
@@ -330,83 +404,142 @@ function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCre
                         <h2 className="text-2xl font-bold text-gray-800">Pending Event Requests</h2>
                         <button
                             onClick={fetchPendingRequests}
-                            className="text-[#FC350B] hover:text-[#D92B0A] text-sm font-medium"
+                            className="bg-[#FC350B] text-white px-4 py-2 rounded-md hover:bg-[#D92B0A] transition-colors text-sm"
                             disabled={loadingRequests}
                         >
-                            {loadingRequests ? 'Loading...' : 'Refresh'}
+                            {loadingRequests ? '🔄 Loading...' : '🔄 Refresh'}
                         </button>
                     </div>
 
                     {loadingRequests ? (
                         <div className="text-center py-12">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FC350B] mx-auto"></div>
+                            <p className="mt-4 text-gray-600">Loading pending requests...</p>
                         </div>
                     ) : pendingRequests.length === 0 ? (
                         <div className="text-center py-12">
                             <p className="text-gray-500 text-lg">No pending requests.</p>
+                            <p className="text-gray-400 text-sm mt-2">When users submit event requests, they will appear here.</p>
                         </div>
                     ) : (
                         <div className="space-y-6">
-                            {pendingRequests.map(request => (
-                                <div key={request.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <h3 className="text-xl font-semibold text-gray-800">{request.name}</h3>
-                                            <p className="text-sm text-gray-600 mt-1">
-                                                Requested by: {request.created_by} ({request.user_email})
-                                            </p>
-                                        </div>
-                                        <span className="px-3 py-1 bg-yellow-100 text-yellow-800 text-sm rounded-full">
-                                            Pending
-                                        </span>
-                                    </div>
+                            {pendingRequests.map(request => {
+                                const imageUrl = request.image_filename
+                                    ? `${API_BASE_URL}/uploads/${request.image_filename}`
+                                    : (request.image_url || null);
 
-                                    <div className="grid grid-cols-2 gap-4 mb-4">
-                                        <div>
-                                            <p className="text-sm text-gray-500">Date & Time</p>
-                                            <p className="font-medium">{request.date} {request.time}</p>
+                                return (
+                                    <div key={request.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                                        <div className="flex flex-col md:flex-row md:justify-between md:items-start mb-4 gap-4">
+                                            <div className="flex-1">
+                                                <h3 className="text-xl font-semibold text-gray-800">{request.name}</h3>
+                                                <p className="text-sm text-gray-600 mt-1">
+                                                    Requested by: <span className="font-medium">{request.created_by || 'User'}</span>
+                                                    ({request.user_email || 'user@example.com'})
+                                                </p>
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Submitted: {new Date(request.created_at).toLocaleDateString()}
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center">
+                                                <span className="px-3 py-1 bg-yellow-100 text-yellow-800 text-sm rounded-full font-medium">
+                                                    ⏳ Pending Review
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <p className="text-sm text-gray-500">Location</p>
-                                            <p className="font-medium">{request.location}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm text-gray-500">Category</p>
-                                            <p className="font-medium">{request.category}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm text-gray-500">Ticket Price</p>
-                                            <p className="font-medium">${request.ticket_price || 'Free'}</p>
-                                        </div>
-                                    </div>
 
-                                    <div className="mb-4">
-                                        <p className="text-sm text-gray-500">Description</p>
-                                        <p className="mt-1 text-gray-700">{request.description}</p>
-                                    </div>
+                                        {/* Event Image if available */}
+                                        {imageUrl && (
+                                            <div className="mb-4">
+                                                <div className="h-48 bg-gray-100 rounded-lg overflow-hidden">
+                                                    <img
+                                                        src={imageUrl}
+                                                        alt={request.name}
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                            e.target.style.display = 'none';
+                                                            e.target.parentElement.innerHTML = `
+                                                                <div class="w-full h-full flex items-center justify-center bg-gray-200">
+                                                                    <span class="text-gray-500">Image preview not available</span>
+                                                                </div>
+                                                            `;
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
 
-                                    <div className="flex space-x-3">
-                                        <button
-                                            onClick={() => handleApproveRequest(request.id)}
-                                            className="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors"
-                                        >
-                                            Approve & Publish
-                                        </button>
-                                        <button
-                                            onClick={() => handleRejectRequest(request.id)}
-                                            className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
-                                        >
-                                            Reject
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteRequest(request.id)}
-                                            className="flex-1 bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 transition-colors"
-                                        >
-                                            Delete
-                                        </button>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                            <div>
+                                                <p className="text-sm text-gray-500">Date & Time</p>
+                                                <p className="font-medium">
+                                                    {request.date} {request.time ? `at ${request.time}` : ''}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Location</p>
+                                                <p className="font-medium">{request.location}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Category</p>
+                                                <p className="font-medium">{request.category}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Ticket Price</p>
+                                                <p className="font-medium">${request.ticket_price || 'Free'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm text-gray-500">Max Attendees</p>
+                                                <p className="font-medium">{request.max_attendees || 100}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="mb-4">
+                                            <p className="text-sm text-gray-500">Description</p>
+                                            <p className="mt-2 p-3 bg-gray-50 rounded-lg text-gray-700">{request.description}</p>
+                                        </div>
+
+                                        <div className="flex flex-col sm:flex-row gap-3">
+                                            <button
+                                                onClick={() => handleApproveRequest(request.id)}
+                                                disabled={loadingActions[request.id]}
+                                                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {loadingActions[request.id] === 'approving' ? (
+                                                    <span className="flex items-center justify-center">
+                                                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                                        Approving...
+                                                    </span>
+                                                ) : '✅ Approve & Publish'}
+                                            </button>
+                                            <button
+                                                onClick={() => handleRejectRequest(request.id)}
+                                                disabled={loadingActions[request.id]}
+                                                className="flex-1 bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {loadingActions[request.id] === 'rejecting' ? (
+                                                    <span className="flex items-center justify-center">
+                                                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                                        Rejecting...
+                                                    </span>
+                                                ) : '❌ Reject'}
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteRequest(request.id)}
+                                                disabled={loadingActions[request.id]}
+                                                className="flex-1 bg-gray-500 text-white px-4 py-3 rounded-md hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {loadingActions[request.id] === 'deleting' ? (
+                                                    <span className="flex items-center justify-center">
+                                                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+                                                        Deleting...
+                                                    </span>
+                                                ) : '🗑️ Delete'}
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

@@ -23,38 +23,45 @@ function Events({ events, setPage, setSelectedEventId }) {
     const handleEventRequest = async (formData) => {
         setSubmitting(true);
         try {
-            console.log('Submitting event request with form data...');
+            console.log('Submitting event request to:', `${API_BASE_URL}/api/events/request`);
 
-            for (let pair of formData.entries()) {
-                console.log(`${pair[0]}:`, pair[1]);
-            }
-
-            const response = await axios.post(`${API_BASE_URL}/api/events/request`, formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
+            const response = await axios.post(
+                `${API_BASE_URL}/api/events/request`,
+                formData,
+                {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    }
                 }
-            });
+            );
 
             console.log('Request successful:', response.data);
 
             setRequestSubmitted(true);
             setShowRequestForm(false);
+
+            if (typeof window.refreshPendingRequests === 'function') {
+                window.refreshPendingRequests();
+            }
+
             setTimeout(() => {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }, 100);
+
         } catch (error) {
             console.error('Error submitting event request:', error);
+            console.error('Full error:', error.response);
 
             let errorMessage = 'Failed to submit event request. Please try again.';
 
             if (error.response) {
-                errorMessage = error.response.data.error || errorMessage;
+                errorMessage = error.response.data?.error || error.response.statusText;
                 console.error('Server response:', error.response.data);
             } else if (error.request) {
                 errorMessage = 'No response from server. Please check your connection.';
                 console.error('No response received:', error.request);
             } else {
-
+                errorMessage = error.message;
                 console.error('Error:', error.message);
             }
 

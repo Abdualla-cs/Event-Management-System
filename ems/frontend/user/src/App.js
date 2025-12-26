@@ -16,6 +16,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('home');
   const [selectedEventId, setSelectedEventId] = useState(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   useEffect(() => {
     fetchEvents();
@@ -37,7 +38,9 @@ function App() {
 
   const fetchEvents = async () => {
     try {
+      console.log('Fetching events from:', `${API_BASE_URL}/api/events`);
       const response = await axios.get(`${API_BASE_URL}/api/events`);
+      console.log('Events fetched:', response.data);
       setEvents(response.data || []);
     } catch (error) {
       console.error('Error fetching events:', error);
@@ -81,24 +84,53 @@ function App() {
     }
   };
 
+  const handleEventRequest = async (formData) => {
+    try {
+      console.log('Submitting event request...');
+      const response = await axios.post(`${API_BASE_URL}/api/events/request`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      console.log('Event request submitted:', response.data);
+      return { success: true, data: response.data };
+    } catch (error) {
+      console.error('Error submitting event request:', error);
+      let errorMessage = 'Failed to submit event request. Please try again.';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      return { success: false, error: errorMessage };
+    }
+  };
+
   const renderPage = () => {
     switch (page) {
       case 'home':
-        return <Home events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
       case 'about':
         return <About setPage={setPage} />;
       case 'events':
-        return <Events events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Events
+          events={events || []}
+          setPage={setPage}
+          setSelectedEventId={setSelectedEventId}
+          onSubmitEventRequest={handleEventRequest}
+        />;
       case 'contact':
         return <Contact onSubmit={handleContactSubmit} />;
       case 'details':
         const selectedEvent = events.find(e => e.id === selectedEventId);
-        return <EventDetails event={selectedEvent} setPage={setPage} />;
+        return <EventDetails
+          event={selectedEvent}
+          setPage={setPage}
+          isAdmin={false} // User is never admin
+        />;
       case 'register':
         const eventToRegister = events.find(e => e.id === selectedEventId);
         return <RegisterPage event={eventToRegister} onSubmit={handleRegistration} setPage={setPage} />;
       default:
-        return <Home events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
     }
   };
 
@@ -112,10 +144,19 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#FEF1E1] text-gray-800 flex flex-col font-sans">
-      <Header page={page} setPage={setPage} />
+      <Header
+        page={page}
+        setPage={setPage}
+        isAdmin={false}
+        onLoginClick={() => setShowLoginModal(true)}
+        onLogout={() => { }}
+        user={null}
+      />
+
       <main className="flex-grow">
         {renderPage()}
       </main>
+
       <Footer />
     </div>
   );

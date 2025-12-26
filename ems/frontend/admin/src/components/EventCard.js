@@ -2,9 +2,30 @@ import React from 'react';
 
 function EventCard({ event, setPage, setSelectedEventId, showActions = false, onEdit, onDelete }) {
     const handleViewDetails = () => {
+        window.history.replaceState({
+            ...window.history.state,
+            eventId: event.id
+        }, '');
         setSelectedEventId(event.id);
         setPage('details');
     };
+
+    const getRegistrationCount = () => {
+        if (event.registration_count !== undefined) {
+            return event.registration_count;
+        }
+        if (event.registrations && Array.isArray(event.registrations)) {
+            return event.registrations.length;
+        }
+        return 0;
+    };
+
+    const getMaxAttendees = () => {
+        return event.maxAttendees || event.max_attendees || 100;
+    };
+
+    const registrationCount = getRegistrationCount();
+    const maxAttendees = getMaxAttendees();
 
     return (
         <div className="bg-white rounded-lg shadow-md hover:shadow-xl transition-shadow flex flex-col overflow-hidden">
@@ -45,7 +66,7 @@ function EventCard({ event, setPage, setSelectedEventId, showActions = false, on
                 </div>
 
                 <p className="text-sm text-[#FC350B] font-semibold mb-3">
-                    {event.ticketPrice ? `$${event.ticketPrice}` : 'Free'}
+                    {event.ticket_price ? `$${event.ticket_price}` : 'Free'}
                 </p>
 
                 <p className="text-gray-700 text-xs sm:text-sm mb-4 flex-grow line-clamp-2 sm:line-clamp-3">
@@ -54,7 +75,7 @@ function EventCard({ event, setPage, setSelectedEventId, showActions = false, on
 
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0 mt-auto">
                     <span className="text-xs text-gray-500">
-                        {(event.registrations || []).length} / {event.maxAttendees || event.max_attendees || '∞'} attendees
+                        {registrationCount} / {maxAttendees} attendees
                     </span>
 
                     {showActions ? (

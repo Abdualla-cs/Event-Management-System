@@ -11,6 +11,8 @@ import RegisterPage from './pages/RegisterPage.js';
 import DashboardPage from './pages/DashboardPage.js';
 import ManageEventPage from './pages/ManageEventPage.js';
 import EditEventPage from './pages/EditEventPage.js';
+import ContactsPage from './pages/ContactsPage.js';
+import LoginPage from './pages/LoginPage.js';
 import LoginModal from './components/LoginModal.js';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -47,12 +49,13 @@ function App() {
     const token = localStorage.getItem('admin_token');
     if (token) {
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/admin/verify`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (response.data.valid) {
+        // Simple token check - you might want to add a verify endpoint
+        const decoded = JSON.parse(atob(token.split('.')[1]));
+        if (decoded.exp * 1000 > Date.now()) {
           setIsAuthenticated(true);
-          setUser(response.data.user);
+          setUser({ email: decoded.email || 'admin@yallaevent.com' });
+        } else {
+          localStorage.removeItem('admin_token');
         }
       } catch (error) {
         localStorage.removeItem('admin_token');
@@ -63,11 +66,15 @@ function App() {
 
   const fetchEvents = async () => {
     try {
+      console.log('Fetching events from:', `${API_BASE_URL}/api/events`);
       const response = await axios.get(`${API_BASE_URL}/api/events`);
-      setEvents(response.data);
+      console.log('Events fetched:', response.data);
+      setEvents(response.data || []);
     } catch (error) {
       console.error('Error fetching events:', error);
       setEvents([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -159,13 +166,24 @@ function App() {
 
   const handleRegistration = async (eventId, registrationData) => {
     try {
-      await axios.post(`${API_BASE_URL}/api/registrations`, {
+      console.log('Registering for event:', eventId, registrationData);
+
+      const response = await axios.post(`${API_BASE_URL}/api/registrations`, {
         event_id: eventId,
         ...registrationData
       });
+
+      console.log('Registration successful:', response.data);
       return true;
     } catch (error) {
       console.error('Registration failed:', error);
+
+      let errorMessage = 'Registration failed. Please try again.';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+
+      alert(`❌ ${errorMessage}`);
       return false;
     }
   };
@@ -180,6 +198,19 @@ function App() {
     }
   };
 
+  const getContacts = async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const response = await axios.get(`${API_BASE_URL}/api/contacts`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+      return [];
+    }
+  };
+
   const renderPage = () => {
     switch (page) {
       case 'home':
@@ -191,29 +222,43 @@ function App() {
       case 'contact':
         return <Contact onSubmit={handleContactSubmit} />;
       case 'details':
-        const selectedEvent = events?.find(e => e.id === selectedEventId);
-        return <EventDetails event={selectedEvent} setPage={setPage} />;
+        const selectedEvent = events.find(e => e.id === selectedEventId);
+        return <EventDetails
+          event={selectedEvent}
+          setPage={setPage}
+          isAdmin={isAuthenticated}
+        />;
       case 'register':
-        const eventToRegister = events?.find(e => e.id === selectedEventId);
+        const eventToRegister = events.find(e => e.id === selectedEventId);
         return <RegisterPage event={eventToRegister} onSubmit={handleRegistration} setPage={setPage} />;
       case 'dashboard':
-        return <DashboardPage events={events || []} />;
+        return isAuthenticated ? <DashboardPage events={events || []} /> : <LoginPage onLogin={handleLogin} setPage={setPage} />;
       case 'manage':
-        return <ManageEventPage
-          events={events || []}
-          setPage={setPage}
-          setSelectedEventId={setSelectedEventId}
-          onDelete={handleDeleteEvent}
-          onCreate={handleCreateEvent}
-          onUpdate={handleUpdateEvent}
-        />;
+        return isAuthenticated ?
+          <ManageEventPage
+            events={events || []}
+            setPage={setPage}
+            setSelectedEventId={setSelectedEventId}
+            onDelete={handleDeleteEvent}
+            onCreate={handleCreateEvent}
+            onUpdate={handleUpdateEvent}
+          /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
       case 'edit':
-        const eventToEdit = events?.find(e => e.id === selectedEventId);
-        return <EditEventPage
-          event={eventToEdit}
-          onUpdate={handleUpdateEvent}
-          setPage={setPage}
-        />;
+        const eventToEdit = events.find(e => e.id === selectedEventId);
+        return isAuthenticated ?
+          <EditEventPage
+            event={eventToEdit}
+            editEvent={handleUpdateEvent}
+            setPage={setPage}
+          /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'contacts':
+        return isAuthenticated ?
+          <ContactsPage getContacts={getContacts} /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'login':
+        return <LoginPage onLogin={handleLogin} setPage={setPage} />;
       default:
         return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
     }
