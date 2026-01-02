@@ -15,7 +15,7 @@ import ContactsPage from './pages/ContactsPage.js';
 import LoginPage from './pages/LoginPage.js';
 import LoginModal from './components/LoginModal.js';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://ems-backend-e1vd.onrender.com';
 
 function App() {
   const [events, setEvents] = useState([]);

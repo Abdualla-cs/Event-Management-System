@@ -4,7 +4,7 @@ import EventCard from '../components/EventCard.js';
 import EventForm from '../components/EventForm.js';
 import StatCard from '../components/StatCard.js';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://ems-backend-e1vd.onrender.com';
 
 function ManageEventsPage({ events, setPage, setSelectedEventId, onDelete, onCreate, onUpdate }) {
     const [editingEvent, setEditingEvent] = useState(null);
