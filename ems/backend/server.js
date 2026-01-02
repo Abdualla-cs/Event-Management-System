@@ -44,11 +44,8 @@ const pool = new Pool(poolConfig);
 pool.connect()
     .then(client => {
         console.log('✅ Successfully connected to Supabase via Transaction Pooler');
-        console.log('Host:', poolConfig.host);
-        console.log('Port:', poolConfig.port);
-        console.log('User:', poolConfig.user);
         client.release();
-        return client.query('SELECT NOW() as time');
+        return pool.query('SELECT NOW() as time');
     })
     .then(result => {
         console.log('✅ Database time check:', result.rows[0].time);
@@ -78,16 +75,14 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const types = /jpeg|jpg|png|gif|webp/;
-        const valid =
-            types.test(file.mimetype) &&
-            types.test(path.extname(file.originalname).toLowerCase());
+        const valid = types.test(file.mimetype) && types.test(path.extname(file.originalname).toLowerCase());
         valid ? cb(null, true) : cb(new Error("Invalid file type"));
     }
 });
 
 app.use("/uploads", express.static("/tmp/uploads"));
 
-/* ================= AUTH ================= */
+/* ================= AUTHENTICATION ================= */
 
 const authenticateToken = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
@@ -100,14 +95,35 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+/* ================= HELPER FUNCTIONS ================= */
+
 function formatEvent(event) {
     return {
         ...event,
         date: new Date(event.date).toISOString().split("T")[0],
         image_url: event.image_filename ? `/uploads/${event.image_filename}` : null,
-        registration_count: parseInt(event.registration_count || 0, 10)
+        registration_count: parseInt(event.registration_count, 10) || 0
     };
 }
+
+/* ================= ROUTES ================= */
+
+// Health check
+app.get("/health", (req, res) => {
+    res.json({ status: "healthy", timestamp: new Date() });
+});
+
+// Root route
+app.get("/", (req, res) => {
+    res.json({
+        message: "Event Management System API",
+        endpoints: {
+            events: "/api/events",
+            admin_login: "/api/admin/login",
+            health: "/health"
+        }
+    });
+});
 
 /* ================= EVENTS ================= */
 
@@ -130,18 +146,12 @@ app.get("/api/events", async (req, res) => {
 app.get("/api/events/:id", async (req, res) => {
     try {
         const eventId = req.params.id;
-        const eventResult = await pool.query(
-            "SELECT * FROM events WHERE id=$1",
-            [eventId]
-        );
+        const eventResult = await pool.query("SELECT * FROM events WHERE id=$1", [eventId]);
 
         if (!eventResult.rows.length)
             return res.status(404).json({ error: "Not found" });
 
-        const regs = await pool.query(
-            "SELECT * FROM registrations WHERE event_id=$1",
-            [eventId]
-        );
+        const regs = await pool.query("SELECT * FROM registrations WHERE event_id=$1", [eventId]);
 
         res.json({
             ...formatEvent(eventResult.rows[0]),
@@ -155,13 +165,7 @@ app.get("/api/events/:id", async (req, res) => {
 
 app.post("/api/events", authenticateToken, upload.single("image"), async (req, res) => {
     try {
-        const {
-            name, date, time, location,
-            category, description,
-            max_attendees = 100,
-            ticket_price = 0
-        } = req.body;
-
+        const { name, date, time, location, category, description, max_attendees = 100, ticket_price = 0 } = req.body;
         const image_filename = req.file ? req.file.filename : null;
 
         const q = `
@@ -174,8 +178,7 @@ app.post("/api/events", authenticateToken, upload.single("image"), async (req, r
 
         const result = await pool.query(q, [
             name, date, time, location, category,
-            description, image_filename,
-            max_attendees, ticket_price
+            description, image_filename, max_attendees, ticket_price
         ]);
 
         res.status(201).json(formatEvent(result.rows[0]));
@@ -187,26 +190,16 @@ app.post("/api/events", authenticateToken, upload.single("image"), async (req, r
 app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req, res) => {
     try {
         const { id } = req.params;
-        const {
-            name, date, time, location,
-            category, description,
-            max_attendees, ticket_price
-        } = req.body;
+        const { name, date, time, location, category, description, max_attendees, ticket_price } = req.body;
 
-        const current = await pool.query(
-            "SELECT image_filename FROM events WHERE id=$1",
-            [id]
-        );
-        if (!current.rows.length)
-            return res.status(404).json({ error: "Not found" });
+        const current = await pool.query("SELECT image_filename FROM events WHERE id=$1", [id]);
+        if (!current.rows.length) return res.status(404).json({ error: "Not found" });
 
         let image_filename = current.rows[0].image_filename;
-
         if (req.file) {
             const newName = `event_${id}_${Date.now()}${path.extname(req.file.filename)}`;
             fs.renameSync(`/tmp/uploads/${req.file.filename}`, `/tmp/uploads/${newName}`);
-            if (image_filename)
-                fs.unlink(`/tmp/uploads/${image_filename}`, () => { });
+            if (image_filename) fs.unlink(`/tmp/uploads/${image_filename}`, () => { });
             image_filename = newName;
         }
 
@@ -216,11 +209,7 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
              description=$6,image_filename=$7,
              max_attendees=$8,ticket_price=$9,updated_at=NOW()
              WHERE id=$10`,
-            [
-                name, date, time, location, category,
-                description, image_filename,
-                max_attendees, ticket_price, id
-            ]
+            [name, date, time, location, category, description, image_filename, max_attendees, ticket_price, id]
         );
 
         res.json({ message: "Updated" });
@@ -232,15 +221,11 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
 app.delete("/api/events/:id", authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await pool.query(
-            "SELECT image_filename FROM events WHERE id=$1",
-            [id]
-        );
+        const result = await pool.query("SELECT image_filename FROM events WHERE id=$1", [id]);
 
-        if (result.rows[0]?.image_filename)
-            fs.unlink(`/tmp/uploads/${result.rows[0].image_filename}`, () => { });
-
+        if (result.rows[0]?.image_filename) fs.unlink(`/tmp/uploads/${result.rows[0].image_filename}`, () => { });
         await pool.query("DELETE FROM events WHERE id=$1", [id]);
+
         res.json({ message: "Deleted" });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -253,18 +238,10 @@ app.post("/api/registrations", async (req, res) => {
     try {
         const { event_id, name, email } = req.body;
 
-        const event = await pool.query(
-            "SELECT max_attendees FROM events WHERE id=$1",
-            [event_id]
-        );
-        if (!event.rows.length)
-            return res.status(404).json({ error: "Event not found" });
+        const event = await pool.query("SELECT max_attendees FROM events WHERE id=$1", [event_id]);
+        if (!event.rows.length) return res.status(404).json({ error: "Event not found" });
 
-        const count = await pool.query(
-            "SELECT COUNT(*) FROM registrations WHERE event_id=$1",
-            [event_id]
-        );
-
+        const count = await pool.query("SELECT COUNT(*) FROM registrations WHERE event_id=$1", [event_id]);
         if (parseInt(count.rows[0].count, 10) >= event.rows[0].max_attendees)
             return res.status(400).json({ error: "Event full" });
 
@@ -283,14 +260,7 @@ app.post("/api/registrations", async (req, res) => {
 
 app.post("/api/events/request", upload.single("image"), async (req, res) => {
     try {
-        const {
-            name, date, time, location,
-            category, description,
-            max_attendees = 100,
-            ticket_price = 0,
-            created_by = "User",
-            user_email = "user@example.com"
-        } = req.body;
+        const { name, date, time, location, category, description, max_attendees = 100, ticket_price = 0, created_by = "User", user_email = "user@example.com" } = req.body;
 
         if (!name || !date || !location || !category || !description)
             return res.status(400).json({ error: "Missing required fields" });
@@ -301,11 +271,7 @@ app.post("/api/events/request", upload.single("image"), async (req, res) => {
               max_attendees,ticket_price,created_by,user_email,status,created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',NOW())
              RETURNING id`,
-            [
-                name, date, time, location, category,
-                description, req.file?.filename || null,
-                max_attendees, ticket_price, created_by, user_email
-            ]
+            [name, date, time, location, category, description, req.file?.filename || null, max_attendees, ticket_price, created_by, user_email]
         );
 
         res.status(201).json({ success: true, request_id: result.rows[0].id });
@@ -320,19 +286,10 @@ app.post("/api/admin/login", async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        const result = await pool.query(
-            "SELECT * FROM admin_users WHERE email=$1 AND password_hash=$2",
-            [email, password]
-        );
+        const result = await pool.query("SELECT * FROM admin_users WHERE email=$1 AND password_hash=$2", [email, password]);
+        if (!result.rows.length) return res.status(401).json({ error: "Invalid credentials" });
 
-        if (!result.rows.length)
-            return res.status(401).json({ error: "Invalid credentials" });
-
-        const token = jwt.sign(
-            { email, role: "admin" },
-            process.env.JWT_SECRET || "yalla-event-secret",
-            { expiresIn: "24h" }
-        );
+        const token = jwt.sign({ email, role: "admin" }, process.env.JWT_SECRET || "yalla-event-secret", { expiresIn: "24h" });
 
         res.json({ token });
     } catch (err) {
@@ -344,13 +301,13 @@ app.get("/api/admin/verify", authenticateToken, (req, res) => {
     res.json({ valid: true });
 });
 
-/* ================= ERRORS ================= */
+/* ================= ERROR HANDLER ================= */
 
 app.use((err, req, res, next) => {
     res.status(400).json({ error: err.message });
 });
 
+/* ================= START SERVER ================= */
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
