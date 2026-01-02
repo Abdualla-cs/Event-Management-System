@@ -9,7 +9,7 @@ import Contact from './pages/Contact.js';
 import EventDetails from './pages/EventDetails.js';
 import RegisterPage from './pages/RegisterPage.js';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://ems-backend-e1vd.onrender.com';
 
 function App() {
   const [events, setEvents] = useState([]);
