@@ -14,49 +14,48 @@ app.use(express.urlencoded({ extended: true }));
 
 /* ================= DATABASE ================= */
 
-function getPgConfig() {
-    if (process.env.DATABASE_URL) {
-        return {
-            connectionString: process.env.DATABASE_URL,
-            ssl: {
-                rejectUnauthorized: false,
-                require: true
-            },
-            max: 10,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-            family: 4
-        };
-    }
+// Supabase Transaction Pooler configuration
+const poolConfig = {
+    host: process.env.PGHOST || 'aws-1-ap-southeast-1.pooler.supabase.com',
+    port: parseInt(process.env.PGPORT) || 6543,
+    user: process.env.PGUSER || 'postgres.bsqznbssksnecndcjzbc',
+    password: process.env.PGPASSWORD ? decodeURIComponent(process.env.PGPASSWORD) : 'abdalla@3082006@',
+    database: process.env.PGDATABASE || 'postgres',
+    ssl: {
+        rejectUnauthorized: false,
+        require: true
+    },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000
+};
 
-    return {
-        host: process.env.PGHOST || "db.bsqznbssksnecndcjzbc.supabase.co",
-        port: process.env.PGPORT || 5432,
-        user: process.env.PGUSER || "postgres",
-        password: process.env.PGPASSWORD
-            ? decodeURIComponent(process.env.PGPASSWORD)
-            : "",
-        database: process.env.PGDATABASE || "postgres",
-        ssl: {
-            rejectUnauthorized: false,
-            require: true
-        },
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-        family: 4
-    };
-}
+console.log('Database connection details:', {
+    host: poolConfig.host,
+    port: poolConfig.port,
+    user: poolConfig.user,
+    database: poolConfig.database,
+    ssl: poolConfig.ssl ? 'enabled' : 'disabled'
+});
 
-const pool = new Pool(getPgConfig());
+const pool = new Pool(poolConfig);
 
+// Test connection on startup
 pool.connect()
     .then(client => {
-        console.log("✅ PostgreSQL Database connected successfully");
+        console.log('✅ Successfully connected to Supabase via Transaction Pooler');
+        console.log('Host:', poolConfig.host);
+        console.log('Port:', poolConfig.port);
+        console.log('User:', poolConfig.user);
         client.release();
+        return client.query('SELECT NOW() as time');
+    })
+    .then(result => {
+        console.log('✅ Database time check:', result.rows[0].time);
     })
     .catch(err => {
-        console.error("❌ PostgreSQL connection error:", err);
+        console.error('❌ Database connection failed:', err.message);
+        console.error('Full error:', err);
     });
 
 /* ================= FILE UPLOAD ================= */
