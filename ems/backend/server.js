@@ -301,6 +301,49 @@ app.get("/api/admin/verify", authenticateToken, (req, res) => {
     res.json({ valid: true });
 });
 
+/* ================= DEBUG ROUTES ================= */
+
+// Test database connection
+app.get("/debug/db", async (req, res) => {
+    try {
+        const result = await pool.query("SELECT NOW() as time, version() as version");
+        res.json({
+            status: "connected",
+            database: {
+                time: result.rows[0].time,
+                version: result.rows[0].version
+            }
+        });
+    } catch (err) {
+        res.json({ status: "error", error: err.message });
+    }
+});
+
+// List all tables
+app.get("/debug/tables", async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name
+        `);
+        res.json({ tables: result.rows.map(r => r.table_name), count: result.rows.length });
+    } catch (err) {
+        res.json({ error: err.message });
+    }
+});
+
+// Test events query
+app.get("/debug/events", async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM events LIMIT 5");
+        res.json({ count: result.rows.length, events: result.rows });
+    } catch (err) {
+        res.json({ error: err.message });
+    }
+});
+
 /* ================= ERROR HANDLER ================= */
 
 app.use((err, req, res, next) => {
