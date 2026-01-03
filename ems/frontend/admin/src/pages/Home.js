@@ -18,8 +18,8 @@ function Home({ events, setPage, setSelectedEventId }) {
                 ></div>
 
                 <div className="relative z-10">
-                    <h1 className="text-3xl md:text-5xl font-bold mb-4">Welcome to YallaEvent</h1>
-                    <p className="text-lg md:text-xl mb-6 opacity-90">Create, manage, and register for events effortlessly</p>
+                    <h1 className="text-3xl md:text-5xl font-bold mb-4">Stop Scrolling, Start Rolling!</h1>
+                    <p className="text-lg md:text-xl mb-6 opacity-90">YallaEvent hooks you up with the dopest events in the city. Get in or get FOMO</p>
                     <button
                         onClick={() => setPage('events')}
                         className="bg-white text-[#FC350B] px-6 py-3 md:px-8 md:py-4 rounded-lg hover:bg-gray-100 transition-colors text-base md:text-lg font-semibold"
