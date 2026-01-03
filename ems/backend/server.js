@@ -255,7 +255,7 @@ app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => 
 
 /* ================= PENDING EVENTS ================= */
 
-app.get("/api/pending-events", authenticateToken, async (req, res) => {
+app.get("/api/admin/pending", authenticateToken, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM events WHERE status='pending' ORDER BY date ASC");
         res.json(result.rows);
@@ -263,6 +263,7 @@ app.get("/api/pending-events", authenticateToken, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
 
 /* ================= STATS ================= */
 
