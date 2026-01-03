@@ -5,7 +5,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const jwt = require("jsonwebtoken");
-const { createClient } = require('@supabase/supabase-js');
+const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
 const app = express();
@@ -14,6 +14,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* ================= DATABASE ================= */
+
 const poolConfig = {
     host: process.env.PGHOST || "aws-1-ap-southeast-1.pooler.supabase.com",
     port: parseInt(process.env.PGPORT) || 6543,
@@ -27,6 +28,7 @@ const poolConfig = {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
 };
+
 const pool = new Pool(poolConfig);
 
 pool.connect()
@@ -36,16 +38,22 @@ pool.connect()
     })
     .catch(err => console.error("❌ DB connection error:", err));
 
-/* ================= SUPABASE STORAGE ================= */
-const supabaseUrl = process.env.SUPABASE_URL || 'https://bsqznbssksnecndcjzbc.supabase.co';
+/* ================= SUPABASE ================= */
+
+const supabaseUrl = process.env.SUPABASE_URL || "https://bsqznbssksnecndcjzbc.supabase.co";
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-/* ================= FILE UPLOAD ================= */
+/* ================= MULTER ================= */
+
 const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB limit
+const upload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 /* ================= AUTH ================= */
+
 const authenticateToken = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ error: "Access denied" });
@@ -58,6 +66,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 /* ================= HELPERS ================= */
+
 const formatEvent = event => ({
     ...event,
     date: new Date(event.date).toISOString().split("T")[0],
@@ -65,20 +74,27 @@ const formatEvent = event => ({
     registration_count: parseInt(event.registration_count || 0),
 });
 
-/* ================= BASIC ROUTES ================= */
-app.get("/", (req, res) => res.json({ message: "Event Management System API" }));
-app.get("/health", (req, res) => res.json({ status: "healthy" }));
+/* ================= ROUTES ================= */
+
+app.get("/", (req, res) => {
+    res.json({ message: "Event Management System API" });
+});
+
+app.get("/health", (req, res) => {
+    res.json({ status: "healthy" });
+});
 
 /* ================= EVENTS ================= */
+
 app.get("/api/events", async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT e.*, COUNT(r.id) AS registration_count
-            FROM events e
-            LEFT JOIN registrations r ON e.id = r.event_id
-            GROUP BY e.id
-            ORDER BY e.date ASC
-        `);
+      SELECT e.*, COUNT(r.id) AS registration_count
+      FROM events e
+      LEFT JOIN registrations r ON e.id = r.event_id
+      GROUP BY e.id
+      ORDER BY e.date ASC
+    `);
         res.json(result.rows.map(formatEvent));
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -88,6 +104,7 @@ app.get("/api/events", async (req, res) => {
 app.get("/api/events/:id", async (req, res) => {
     try {
         const { id } = req.params;
+
         const event = await pool.query("SELECT * FROM events WHERE id=$1", [id]);
         if (!event.rows.length) return res.status(404).json({ error: "Not found" });
 
@@ -103,69 +120,73 @@ app.get("/api/events/:id", async (req, res) => {
     }
 });
 
+/* POST EVENT */
 app.post("/api/events", authenticateToken, upload.single("image"), async (req, res) => {
     try {
-        const { name, date, time, location, category, description, max_attendees, ticket_price } = req.body;
-        let image_filename = null;
+        const { name, date, time, location, category, description } = req.body;
+        const max_attendees = req.body.max_attendees ? parseInt(req.body.max_attendees) : 100;
+        const ticket_price = req.body.ticket_price ? parseFloat(req.body.ticket_price) : 0;
 
+        let image_filename = null;
         if (req.file) {
-            const ext = req.file.originalname.split('.').pop();
+            const ext = req.file.originalname.split(".").pop();
             const fileName = `event_${Date.now()}.${ext}`;
             const { error } = await supabase
-                .storage
-                .from('events')
+                .storage.from("events")
                 .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
-
             if (error) throw error;
 
-            const { data: publicUrlData } = supabase.storage.from('events').getPublicUrl(fileName);
+            const { data: publicUrlData } = supabase.storage.from("events").getPublicUrl(fileName);
             image_filename = publicUrlData.publicUrl;
         }
 
         const q = `
-            INSERT INTO events
-            (name,date,time,location,category,description,image_filename,max_attendees,ticket_price,status,created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upcoming',NOW())
-            RETURNING *
-        `;
-        const values = [name, date, time, location, category, description, image_filename, max_attendees || 100, ticket_price || 0];
+      INSERT INTO events
+      (name, date, time, location, category, description, image_filename, max_attendees, ticket_price, status, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upcoming',NOW())
+      RETURNING *
+    `;
+        const values = [name, date, time, location, category, description, image_filename, max_attendees, ticket_price];
         const result = await pool.query(q, values);
 
         res.status(201).json(result.rows[0]);
     } catch (err) {
-        console.error("Upload error:", err);
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });
 
+/* UPDATE EVENT */
 app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req, res) => {
     try {
         const { id } = req.params;
+
         const current = await pool.query("SELECT image_filename FROM events WHERE id=$1", [id]);
         if (!current.rows.length) return res.status(404).json({ error: "Not found" });
 
         let image_filename = current.rows[0].image_filename;
         if (req.file) {
-            const ext = req.file.originalname.split('.').pop();
+            const ext = req.file.originalname.split(".").pop();
             const fileName = `event_${Date.now()}.${ext}`;
             const { error } = await supabase
-                .storage
-                .from('events')
+                .storage.from("events")
                 .upload(fileName, req.file.buffer, { contentType: req.file.mimetype });
-
             if (error) throw error;
 
-            const { data: publicUrlData } = supabase.storage.from('events').getPublicUrl(fileName);
+            const { data: publicUrlData } = supabase.storage.from("events").getPublicUrl(fileName);
             image_filename = publicUrlData.publicUrl;
         }
 
+        const max_attendees = req.body.max_attendees ? parseInt(req.body.max_attendees) : 100;
+        const ticket_price = req.body.ticket_price ? parseFloat(req.body.ticket_price) : 0;
+
         const q = `
-            UPDATE events SET
-            name=$1,date=$2,time=$3,location=$4,category=$5,
-            description=$6,image_filename=$7,max_attendees=$8,
-            ticket_price=$9,updated_at=NOW()
-            WHERE id=$10
-        `;
+      UPDATE events SET
+      name=$1,date=$2,time=$3,location=$4,category=$5,
+      description=$6,image_filename=$7,max_attendees=$8,
+      ticket_price=$9,updated_at=NOW()
+      WHERE id=$10
+    `;
         const values = [
             req.body.name,
             req.body.date,
@@ -174,18 +195,20 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
             req.body.category,
             req.body.description,
             image_filename,
-            req.body.max_attendees,
-            req.body.ticket_price,
-            id
+            max_attendees,
+            ticket_price,
+            id,
         ];
         await pool.query(q, values);
 
         res.json({ message: "Updated" });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });
 
+/* DELETE EVENT */
 app.delete("/api/events/:id", authenticateToken, async (req, res) => {
     try {
         await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
@@ -196,6 +219,7 @@ app.delete("/api/events/:id", authenticateToken, async (req, res) => {
 });
 
 /* ================= REGISTRATIONS ================= */
+
 app.post("/api/registrations", async (req, res) => {
     try {
         const { event_id, name, email } = req.body;
@@ -229,17 +253,29 @@ app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => 
     }
 });
 
+/* ================= PENDING EVENTS ================= */
+
+app.get("/api/pending-events", authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM events WHERE status='pending' ORDER BY date ASC");
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 /* ================= STATS ================= */
+
 app.get("/api/stats", authenticateToken, async (req, res) => {
     try {
         const totalEvents = await pool.query("SELECT COUNT(*) FROM events");
         const upcomingEvents = await pool.query("SELECT COUNT(*) FROM events WHERE date >= CURRENT_DATE");
         const totalRegistrations = await pool.query("SELECT COUNT(*) FROM registrations");
         const revenue = await pool.query(`
-            SELECT SUM(e.ticket_price) AS total
-            FROM registrations r
-            JOIN events e ON r.event_id = e.id
-        `);
+      SELECT SUM(e.ticket_price) AS total
+      FROM registrations r
+      JOIN events e ON r.event_id = e.id
+    `);
 
         res.json({
             totalEvents: parseInt(totalEvents.rows[0].count),
@@ -253,18 +289,18 @@ app.get("/api/stats", authenticateToken, async (req, res) => {
 });
 
 /* ================= CONTACT ================= */
+
 app.post("/api/contact", async (req, res) => {
     try {
         const { name, email, message } = req.body;
-        if (!name || !email || !message)
-            return res.status(400).json({ error: "All fields are required" });
+        if (!name || !email || !message) return res.status(400).json({ error: "All fields are required" });
 
-        const result = await pool.query(
-            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW()) RETURNING id",
+        await pool.query(
+            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
             [name, email, message]
         );
 
-        res.status(201).json({ success: true, contact_id: result.rows[0].id });
+        res.status(201).json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -279,24 +315,11 @@ app.get("/api/contacts", authenticateToken, async (req, res) => {
     }
 });
 
-/* ================= PENDING EVENTS ================= */
-app.get("/api/admin/pending", authenticateToken, async (req, res) => {
-    try {
-        const result = await pool.query("SELECT * FROM events WHERE status='pending' ORDER BY date ASC");
-        const pendingEvents = result.rows.map(event => ({
-            ...event,
-            date: new Date(event.date).toISOString().split("T")[0],
-            image_url: event.image_filename || null,
-        }));
-        res.json(pendingEvents);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 /* ================= ADMIN AUTH ================= */
+
 app.post("/api/admin/login", async (req, res) => {
     const { email, password } = req.body;
+
     const result = await pool.query(
         "SELECT * FROM admin_users WHERE email=$1 AND password_hash=$2",
         [email, password]
@@ -314,11 +337,13 @@ app.post("/api/admin/login", async (req, res) => {
 });
 
 /* ================= DEBUG ================= */
+
 app.get("/debug/db", async (req, res) => {
     const result = await pool.query("SELECT NOW(), version()");
     res.json(result.rows[0]);
 });
 
 /* ================= START SERVER ================= */
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
