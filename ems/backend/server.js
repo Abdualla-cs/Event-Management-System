@@ -106,6 +106,14 @@ function formatEvent(event) {
     };
 }
 
+function formatPendingEvent(event) {
+    return {
+        ...event,
+        date: new Date(event.date).toISOString().split("T")[0],
+        image_url: event.image_filename ? `/uploads/${event.image_filename}` : null
+    };
+}
+
 /* ================= ROUTES ================= */
 
 // Health check
@@ -120,6 +128,7 @@ app.get("/", (req, res) => {
         endpoints: {
             events: "/api/events",
             admin_login: "/api/admin/login",
+            admin_pending: "/api/admin/pending",
             health: "/health"
         }
     });
@@ -275,6 +284,138 @@ app.post("/api/events/request", upload.single("image"), async (req, res) => {
         );
 
         res.status(201).json({ success: true, request_id: result.rows[0].id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ================= ADMIN PENDING EVENTS MANAGEMENT ================= */
+
+// Get all pending events (admin only)
+app.get("/api/admin/pending", authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT * FROM pending_events WHERE status = 'pending' ORDER BY created_at DESC"
+        );
+
+        const pendingEvents = result.rows.map(formatPendingEvent);
+        res.json(pendingEvents);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Approve a pending event
+app.post("/api/admin/pending/:id/approve", authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get the pending event
+        const pendingResult = await pool.query(
+            "SELECT * FROM pending_events WHERE id = $1 AND status = 'pending'",
+            [id]
+        );
+
+        if (pendingResult.rows.length === 0) {
+            return res.status(404).json({ error: "Pending event not found" });
+        }
+
+        const pendingEvent = pendingResult.rows[0];
+
+        // Insert into events table
+        const insertQuery = `
+            INSERT INTO events 
+            (name, date, time, location, category, description, image_filename,
+             max_attendees, ticket_price, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'upcoming', NOW())
+            RETURNING *
+        `;
+
+        const insertValues = [
+            pendingEvent.name,
+            pendingEvent.date,
+            pendingEvent.time,
+            pendingEvent.location,
+            pendingEvent.category,
+            pendingEvent.description,
+            pendingEvent.image_filename,
+            pendingEvent.max_attendees || 100,
+            pendingEvent.ticket_price || 0
+        ];
+
+        const eventResult = await pool.query(insertQuery, insertValues);
+
+        // Update pending event status to approved
+        await pool.query(
+            "UPDATE pending_events SET status = 'approved' WHERE id = $1",
+            [id]
+        );
+
+        res.json({
+            success: true,
+            event_id: eventResult.rows[0].id,
+            message: "Event approved successfully"
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Reject a pending event
+app.post("/api/admin/pending/:id/reject", authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if pending event exists
+        const pendingResult = await pool.query(
+            "SELECT * FROM pending_events WHERE id = $1 AND status = 'pending'",
+            [id]
+        );
+
+        if (pendingResult.rows.length === 0) {
+            return res.status(404).json({ error: "Pending event not found" });
+        }
+
+        // Update status to rejected
+        await pool.query(
+            "UPDATE pending_events SET status = 'rejected' WHERE id = $1",
+            [id]
+        );
+
+        res.json({
+            success: true,
+            message: "Event rejected successfully"
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete a pending event
+app.delete("/api/admin/pending/:id", authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get image filename to delete file
+        const result = await pool.query(
+            "SELECT image_filename FROM pending_events WHERE id = $1",
+            [id]
+        );
+
+        // Delete image file if exists
+        if (result.rows[0]?.image_filename) {
+            fs.unlink(`/tmp/uploads/${result.rows[0].image_filename}`, (err) => {
+                if (err) console.error("Error deleting image:", err);
+            });
+        }
+
+        // Delete pending event
+        await pool.query("DELETE FROM pending_events WHERE id = $1", [id]);
+
+        res.json({
+            success: true,
+            message: "Pending event deleted successfully"
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
