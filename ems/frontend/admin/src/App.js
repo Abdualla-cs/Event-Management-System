@@ -232,8 +232,12 @@ function App() {
         const eventToRegister = events.find(e => e.id === selectedEventId);
         return <RegisterPage event={eventToRegister} onSubmit={handleRegistration} setPage={setPage} />;
       case 'dashboard':
-        return isAuthenticated ? <DashboardPage events={events || []} /> : <LoginPage onLogin={handleLogin} setPage={setPage} />;
-      case 'manage':
+        return isAuthenticated ?
+          <DashboardPage
+            events={events || []}
+            getContacts={getContacts} // <--- Added this line
+          /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
         return isAuthenticated ?
           <ManageEventPage
             events={events || []}

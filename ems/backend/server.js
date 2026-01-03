@@ -80,13 +80,7 @@ const formatEvent = event => ({
     registration_count: parseInt(event.registration_count || 0),
 });
 
-const formatPendingEvent = event => ({
-    ...event,
-    date: new Date(event.date).toISOString().split("T")[0],
-    image_url: event.image_filename ? `/uploads/${event.image_filename}` : null,
-});
-
-/* ================= ROUTES ================= */
+/* ================= BASIC ROUTES ================= */
 
 app.get("/", (req, res) => {
     res.json({ message: "Event Management System API" });
@@ -116,8 +110,14 @@ app.get("/api/events", async (req, res) => {
 app.get("/api/events/:id", async (req, res) => {
     try {
         const { id } = req.params;
-        const event = await pool.query("SELECT * FROM events WHERE id=$1", [id]);
-        if (!event.rows.length) return res.status(404).json({ error: "Not found" });
+
+        const event = await pool.query(
+            "SELECT * FROM events WHERE id=$1",
+            [id]
+        );
+
+        if (!event.rows.length)
+            return res.status(404).json({ error: "Not found" });
 
         const regs = await pool.query(
             "SELECT * FROM registrations WHERE event_id=$1",
@@ -166,8 +166,14 @@ app.post("/api/events", authenticateToken, upload.single("image"), async (req, r
 app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req, res) => {
     try {
         const { id } = req.params;
-        const current = await pool.query("SELECT image_filename FROM events WHERE id=$1", [id]);
-        if (!current.rows.length) return res.status(404).json({ error: "Not found" });
+
+        const current = await pool.query(
+            "SELECT image_filename FROM events WHERE id=$1",
+            [id]
+        );
+
+        if (!current.rows.length)
+            return res.status(404).json({ error: "Not found" });
 
         let image_filename = current.rows[0].image_filename;
         if (req.file) image_filename = req.file.filename;
@@ -237,12 +243,71 @@ app.post("/api/registrations", async (req, res) => {
     }
 });
 
-/* 🔒 ADMIN: GET EVENT REGISTRATIONS */
+/* 🔒 ADMIN: EVENT REGISTRATIONS */
 app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
             "SELECT * FROM registrations WHERE event_id=$1 ORDER BY registered_at DESC",
             [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ================= STATS ================= */
+
+app.get("/api/stats", authenticateToken, async (req, res) => {
+    try {
+        const totalEvents = await pool.query("SELECT COUNT(*) FROM events");
+        const upcomingEvents = await pool.query(
+            "SELECT COUNT(*) FROM events WHERE date >= CURRENT_DATE"
+        );
+        const totalRegistrations = await pool.query(
+            "SELECT COUNT(*) FROM registrations"
+        );
+        const revenue = await pool.query(`
+            SELECT SUM(e.ticket_price) AS total
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+        `);
+
+        res.json({
+            totalEvents: parseInt(totalEvents.rows[0].count),
+            upcomingEvents: parseInt(upcomingEvents.rows[0].count),
+            totalRegistrations: parseInt(totalRegistrations.rows[0].count),
+            totalRevenue: parseFloat(revenue.rows[0].total || 0),
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ================= CONTACT ================= */
+
+app.post("/api/contact", async (req, res) => {
+    try {
+        const { name, email, message } = req.body;
+
+        if (!name || !email || !message)
+            return res.status(400).json({ error: "All fields are required" });
+
+        await pool.query(
+            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
+            [name, email, message]
+        );
+
+        res.status(201).json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get("/api/contacts", authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT * FROM contacts ORDER BY sent_at DESC"
         );
         res.json(result.rows);
     } catch (err) {
@@ -282,4 +347,6 @@ app.get("/debug/db", async (req, res) => {
 /* ================= START ================= */
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () =>
+    console.log(`🚀 Server running on port ${PORT}`)
+);
