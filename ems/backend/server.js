@@ -2,9 +2,8 @@ const express = require("express");
 const { Pool } = require("pg");
 const cors = require("cors");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const jwt = require("jsonwebtoken");
+const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
 const app = express();
@@ -14,49 +13,35 @@ app.use(express.urlencoded({ extended: true }));
 
 /* ================= DATABASE ================= */
 
-const poolConfig = {
-    host: process.env.PGHOST || "aws-1-ap-southeast-1.pooler.supabase.com",
-    port: parseInt(process.env.PGPORT) || 6543,
-    user: process.env.PGUSER || "postgres.bsqznbssksnecndcjzbc",
-    password: process.env.PGPASSWORD
-        ? decodeURIComponent(process.env.PGPASSWORD)
-        : "abdalla@3082006@",
-    database: process.env.PGDATABASE || "postgres",
-    ssl: { rejectUnauthorized: false, require: true },
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-};
-
-const pool = new Pool(poolConfig);
+const pool = new Pool({
+    host: process.env.PGHOST,
+    port: process.env.PGPORT,
+    user: process.env.PGUSER,
+    password: decodeURIComponent(process.env.PGPASSWORD),
+    database: process.env.PGDATABASE,
+    ssl: { rejectUnauthorized: false }
+});
 
 pool.connect()
-    .then(client => {
-        console.log("✅ Connected to Supabase");
-        client.release();
+    .then(c => {
+        console.log("✅ Connected to PostgreSQL");
+        c.release();
     })
-    .catch(err => console.error("❌ DB connection error:", err));
+    .catch(err => console.error("❌ DB error:", err));
+
+/* ================= SUPABASE ================= */
+
+const supabase = createClient(
+    "https://bsqznbssksnecndcjzbc.supabase.co",
+    process.env.SUPABASE_KEY
+);
 
 /* ================= FILE UPLOAD ================= */
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const dir = "/tmp/uploads/";
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
-    },
-    filename: (req, file, cb) => {
-        const id = req.params.id || "temp";
-        cb(null, `event_${id}_${Date.now()}${path.extname(file.originalname)}`);
-    },
-});
-
 const upload = multer({
-    storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }
 });
-
-app.use("/uploads", express.static("/tmp/uploads"));
 
 /* ================= AUTH ================= */
 
@@ -64,7 +49,7 @@ const authenticateToken = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ error: "Access denied" });
 
-    jwt.verify(token, process.env.JWT_SECRET || "yalla-event-secret", (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ error: "Invalid token" });
         req.user = user;
         next();
@@ -73,35 +58,34 @@ const authenticateToken = (req, res, next) => {
 
 /* ================= HELPERS ================= */
 
-const formatEvent = event => ({
-    ...event,
-    date: new Date(event.date).toISOString().split("T")[0],
-    image_url: event.image_filename ? `/uploads/${event.image_filename}` : null,
-    registration_count: parseInt(event.registration_count || 0),
+const formatEvent = e => ({
+    ...e,
+    date: new Date(e.date).toISOString().split("T")[0],
+    registration_count: parseInt(e.registration_count || 0)
 });
 
-/* ================= BASIC ROUTES ================= */
+/* ================= BASIC ================= */
 
-app.get("/", (req, res) => {
-    res.json({ message: "Event Management System API" });
+app.get("/", (_, res) => {
+    res.json({ message: "Event Management API" });
 });
 
-app.get("/health", (req, res) => {
-    res.json({ status: "healthy" });
+app.get("/health", (_, res) => {
+    res.json({ status: "ok" });
 });
 
 /* ================= EVENTS ================= */
 
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", async (_, res) => {
     try {
-        const result = await pool.query(`
-            SELECT e.*, COUNT(r.id) AS registration_count
+        const r = await pool.query(`
+            SELECT e.*, COUNT(rg.id) AS registration_count
             FROM events e
-            LEFT JOIN registrations r ON e.id = r.event_id
+            LEFT JOIN registrations rg ON e.id = rg.event_id
             GROUP BY e.id
             ORDER BY e.date ASC
         `);
-        res.json(result.rows.map(formatEvent));
+        res.json(r.rows.map(formatEvent));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -109,109 +93,89 @@ app.get("/api/events", async (req, res) => {
 
 app.get("/api/events/:id", async (req, res) => {
     try {
-        const { id } = req.params;
-
-        const event = await pool.query(
+        const e = await pool.query(
             "SELECT * FROM events WHERE id=$1",
-            [id]
+            [req.params.id]
         );
-
-        if (!event.rows.length)
+        if (!e.rows.length)
             return res.status(404).json({ error: "Not found" });
 
-        const regs = await pool.query(
+        const r = await pool.query(
             "SELECT * FROM registrations WHERE event_id=$1",
-            [id]
+            [req.params.id]
         );
 
         res.json({
-            ...formatEvent(event.rows[0]),
-            registrations: regs.rows,
-            registration_count: regs.rows.length,
+            ...formatEvent(e.rows[0]),
+            registrations: r.rows,
+            registration_count: r.rows.length
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.post("/api/events", authenticateToken, upload.single("image"), async (req, res) => {
-    try {
-        const {
-            name,
-            date,
-            time,
-            location,
-            category,
-            description,
-            max_attendees = 100,
-            ticket_price = 0,
-        } = req.body;
+/* ===== CREATE EVENT (Supabase Image Upload) ===== */
 
-        const image_filename = req.file?.filename || null;
+app.post(
+    "/api/events",
+    authenticateToken,
+    upload.single("image"),
+    async (req, res) => {
+        try {
+            const {
+                name, date, time, location,
+                category, description,
+                max_attendees = 100,
+                ticket_price = 0
+            } = req.body;
 
-        const result = await pool.query(
-            `INSERT INTO events
-            (name,date,time,location,category,description,image_filename,max_attendees,ticket_price,status,created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upcoming',NOW())
-            RETURNING *`,
-            [name, date, time, location, category, description, image_filename, max_attendees, ticket_price]
-        );
+            let image_filename = null;
 
-        res.status(201).json(formatEvent(result.rows[0]));
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+            if (req.file) {
+                const ext = req.file.originalname.split(".").pop();
+                const fileName = `${Date.now()}.${ext}`;
+
+                const { error } = await supabase
+                    .storage
+                    .from("events")
+                    .upload(fileName, req.file.buffer, {
+                        contentType: req.file.mimetype
+                    });
+
+                if (error) throw error;
+
+                const { data } = supabase
+                    .storage
+                    .from("events")
+                    .getPublicUrl(fileName);
+
+                image_filename = data.publicUrl;
+            }
+
+            const q = `
+                INSERT INTO events
+                (name,date,time,location,category,description,
+                 image_filename,max_attendees,ticket_price,status,created_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upcoming',NOW())
+                RETURNING *
+            `;
+
+            const v = [
+                name, date, time, location,
+                category, description,
+                image_filename, max_attendees, ticket_price
+            ];
+
+            const r = await pool.query(q, v);
+            res.status(201).json(r.rows[0]);
+
+        } catch (err) {
+            console.error(err);
+            res.status(500).json({ error: err.message });
+        }
     }
-});
-
-app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const current = await pool.query(
-            "SELECT image_filename FROM events WHERE id=$1",
-            [id]
-        );
-
-        if (!current.rows.length)
-            return res.status(404).json({ error: "Not found" });
-
-        let image_filename = current.rows[0].image_filename;
-        if (req.file) image_filename = req.file.filename;
-
-        await pool.query(
-            `UPDATE events SET
-            name=$1,date=$2,time=$3,location=$4,category=$5,
-            description=$6,image_filename=$7,max_attendees=$8,
-            ticket_price=$9,updated_at=NOW()
-            WHERE id=$10`,
-            [
-                req.body.name,
-                req.body.date,
-                req.body.time,
-                req.body.location,
-                req.body.category,
-                req.body.description,
-                image_filename,
-                req.body.max_attendees,
-                req.body.ticket_price,
-                id,
-            ]
-        );
-
-        res.json({ message: "Updated" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.delete("/api/events/:id", authenticateToken, async (req, res) => {
-    try {
-        await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
-        res.json({ message: "Deleted" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+);
 
 /* ================= REGISTRATIONS ================= */
 
@@ -219,17 +183,17 @@ app.post("/api/registrations", async (req, res) => {
     try {
         const { event_id, name, email } = req.body;
 
-        const count = await pool.query(
+        const c = await pool.query(
             "SELECT COUNT(*) FROM registrations WHERE event_id=$1",
             [event_id]
         );
 
-        const max = await pool.query(
+        const m = await pool.query(
             "SELECT max_attendees FROM events WHERE id=$1",
             [event_id]
         );
 
-        if (parseInt(count.rows[0].count) >= max.rows[0].max_attendees)
+        if (+c.rows[0].count >= m.rows[0].max_attendees)
             return res.status(400).json({ error: "Event full" });
 
         await pool.query(
@@ -243,94 +207,22 @@ app.post("/api/registrations", async (req, res) => {
     }
 });
 
-/* 🔒 ADMIN: EVENT REGISTRATIONS */
-app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => {
-    try {
-        const result = await pool.query(
-            "SELECT * FROM registrations WHERE event_id=$1 ORDER BY registered_at DESC",
-            [req.params.id]
-        );
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/* ================= STATS ================= */
-
-app.get("/api/stats", authenticateToken, async (req, res) => {
-    try {
-        const totalEvents = await pool.query("SELECT COUNT(*) FROM events");
-        const upcomingEvents = await pool.query(
-            "SELECT COUNT(*) FROM events WHERE date >= CURRENT_DATE"
-        );
-        const totalRegistrations = await pool.query(
-            "SELECT COUNT(*) FROM registrations"
-        );
-        const revenue = await pool.query(`
-            SELECT SUM(e.ticket_price) AS total
-            FROM registrations r
-            JOIN events e ON r.event_id = e.id
-        `);
-
-        res.json({
-            totalEvents: parseInt(totalEvents.rows[0].count),
-            upcomingEvents: parseInt(upcomingEvents.rows[0].count),
-            totalRegistrations: parseInt(totalRegistrations.rows[0].count),
-            totalRevenue: parseFloat(revenue.rows[0].total || 0),
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/* ================= CONTACT ================= */
-
-app.post("/api/contact", async (req, res) => {
-    try {
-        const { name, email, message } = req.body;
-
-        if (!name || !email || !message)
-            return res.status(400).json({ error: "All fields are required" });
-
-        await pool.query(
-            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
-            [name, email, message]
-        );
-
-        res.status(201).json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.get("/api/contacts", authenticateToken, async (req, res) => {
-    try {
-        const result = await pool.query(
-            "SELECT * FROM contacts ORDER BY sent_at DESC"
-        );
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/* ================= ADMIN AUTH ================= */
+/* ================= ADMIN ================= */
 
 app.post("/api/admin/login", async (req, res) => {
     const { email, password } = req.body;
 
-    const result = await pool.query(
+    const r = await pool.query(
         "SELECT * FROM admin_users WHERE email=$1 AND password_hash=$2",
         [email, password]
     );
 
-    if (!result.rows.length)
+    if (!r.rows.length)
         return res.status(401).json({ error: "Invalid credentials" });
 
     const token = jwt.sign(
         { email, role: "admin" },
-        process.env.JWT_SECRET || "yalla-event-secret",
+        process.env.JWT_SECRET,
         { expiresIn: "24h" }
     );
 
@@ -339,9 +231,9 @@ app.post("/api/admin/login", async (req, res) => {
 
 /* ================= DEBUG ================= */
 
-app.get("/debug/db", async (req, res) => {
-    const result = await pool.query("SELECT NOW(), version()");
-    res.json(result.rows[0]);
+app.get("/debug/db", async (_, res) => {
+    const r = await pool.query("SELECT NOW(), version()");
+    res.json(r.rows[0]);
 });
 
 /* ================= START ================= */
