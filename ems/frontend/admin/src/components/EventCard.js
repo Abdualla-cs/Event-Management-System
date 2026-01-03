@@ -32,7 +32,7 @@ function EventCard({ event, setPage, setSelectedEventId, showActions = false, on
             <div className="h-40 sm:h-48 bg-gray-200 relative">
                 {event.image_url ? (
                     <img
-                        src={`http://localhost:5000${event.image_url}`}
+                        src={event.image_url}
                         alt={event.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {

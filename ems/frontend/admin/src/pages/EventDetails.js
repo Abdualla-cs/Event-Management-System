@@ -96,13 +96,9 @@ function EventDetails({ event, setPage, isAdmin = false }) {
     const actualRegistrationCount =
         registration_count || registrations.length;
 
-    let imageUrl = null;
-    if (image_url) {
-        if (image_url.startsWith("http")) imageUrl = image_url;
-        else if (image_url.startsWith("/uploads"))
-            imageUrl = `${API_BASE_URL}${image_url}`;
-        else imageUrl = `${API_BASE_URL}/uploads/${image_url}`;
-    }
+    const imageUrl = image_url?.startsWith('http')
+        ? image_url
+        : `${API_BASE_URL}${image_url}`;
 
     return (
         <div className="container mx-auto px-4 py-8">
