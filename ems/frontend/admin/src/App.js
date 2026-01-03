@@ -33,23 +33,16 @@ function App() {
 
   useEffect(() => {
     window.scrollTo(0, 0);
-
     const timer = setTimeout(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 50);
-
     return () => clearTimeout(timer);
   }, [page]);
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
 
   const checkAuth = async () => {
     const token = localStorage.getItem('admin_token');
     if (token) {
       try {
-        // Simple token check - you might want to add a verify endpoint
         const decoded = JSON.parse(atob(token.split('.')[1]));
         if (decoded.exp * 1000 > Date.now()) {
           setIsAuthenticated(true);
@@ -66,9 +59,7 @@ function App() {
 
   const fetchEvents = async () => {
     try {
-      console.log('Fetching events from:', `${API_BASE_URL}/api/events`);
       const response = await axios.get(`${API_BASE_URL}/api/events`);
-      console.log('Events fetched:', response.data);
       setEvents(response.data || []);
     } catch (error) {
       console.error('Error fetching events:', error);
@@ -84,7 +75,6 @@ function App() {
         email,
         password
       });
-
       localStorage.setItem('admin_token', response.data.token);
       setIsAuthenticated(true);
       setUser(response.data.user);
@@ -114,15 +104,10 @@ function App() {
           'Content-Type': 'multipart/form-data'
         }
       });
-
       fetchEvents();
       return { success: true };
     } catch (error) {
-      console.error('Create event error:', error);
-      return {
-        success: false,
-        error: error.response?.data?.error || 'Failed to create event'
-      };
+      return { success: false, error: error.response?.data?.error || 'Failed to create event' };
     }
   };
 
@@ -135,15 +120,10 @@ function App() {
           'Content-Type': 'multipart/form-data'
         }
       });
-
       fetchEvents();
       return { success: true };
     } catch (error) {
-      console.error('Update event error:', error);
-      return {
-        success: false,
-        error: error.response?.data?.error || 'Failed to update event'
-      };
+      return { success: false, error: error.response?.data?.error || 'Failed to update event' };
     }
   };
 
@@ -153,37 +133,22 @@ function App() {
       await axios.delete(`${API_BASE_URL}/api/events/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-
       fetchEvents();
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error.response?.data?.error || 'Failed to delete event'
-      };
+      return { success: false, error: error.response?.data?.error || 'Failed to delete event' };
     }
   };
 
   const handleRegistration = async (eventId, registrationData) => {
     try {
-      console.log('Registering for event:', eventId, registrationData);
-
-      const response = await axios.post(`${API_BASE_URL}/api/registrations`, {
+      await axios.post(`${API_BASE_URL}/api/registrations`, {
         event_id: eventId,
         ...registrationData
       });
-
-      console.log('Registration successful:', response.data);
       return true;
     } catch (error) {
-      console.error('Registration failed:', error);
-
-      let errorMessage = 'Registration failed. Please try again.';
-      if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      }
-
-      alert(`❌ ${errorMessage}`);
+      alert(`❌ ${error.response?.data?.error || 'Registration failed'}`);
       return false;
     }
   };
@@ -193,7 +158,6 @@ function App() {
       await axios.post(`${API_BASE_URL}/api/contact`, contactData);
       return true;
     } catch (error) {
-      console.error('Contact submission failed:', error);
       return false;
     }
   };
@@ -206,7 +170,6 @@ function App() {
       });
       return response.data;
     } catch (error) {
-      console.error('Error fetching contacts:', error);
       return [];
     }
   };
@@ -214,34 +177,27 @@ function App() {
   const renderPage = () => {
     switch (page) {
       case 'home':
-        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Home events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
       case 'about':
         return <About setPage={setPage} />;
       case 'events':
-        return <Events events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Events events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
       case 'contact':
         return <Contact onSubmit={handleContactSubmit} />;
       case 'details':
         const selectedEvent = events.find(e => e.id === selectedEventId);
-        return <EventDetails
-          event={selectedEvent}
-          setPage={setPage}
-          isAdmin={isAuthenticated}
-        />;
+        return <EventDetails event={selectedEvent} setPage={setPage} isAdmin={isAuthenticated} />;
       case 'register':
         const eventToRegister = events.find(e => e.id === selectedEventId);
         return <RegisterPage event={eventToRegister} onSubmit={handleRegistration} setPage={setPage} />;
       case 'dashboard':
         return isAuthenticated ?
-          <DashboardPage
-            events={events || []}
-            getContacts={getContacts}
-          /> :
-          <LoginPage onLogin={handleLogin} setPage={setPage} />;s
+          <DashboardPage events={events} getContacts={getContacts} /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
       case 'manage':
         return isAuthenticated ?
           <ManageEventPage
-            events={events || []}
+            events={events}
             setPage={setPage}
             setSelectedEventId={setSelectedEventId}
             onDelete={handleDeleteEvent}
@@ -252,11 +208,7 @@ function App() {
       case 'edit':
         const eventToEdit = events.find(e => e.id === selectedEventId);
         return isAuthenticated ?
-          <EditEventPage
-            event={eventToEdit}
-            editEvent={handleUpdateEvent}
-            setPage={setPage}
-          /> :
+          <EditEventPage event={eventToEdit} editEvent={handleUpdateEvent} setPage={setPage} /> :
           <LoginPage onLogin={handleLogin} setPage={setPage} />;
       case 'contacts':
         return isAuthenticated ?
@@ -265,7 +217,7 @@ function App() {
       case 'login':
         return <LoginPage onLogin={handleLogin} setPage={setPage} />;
       default:
-        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+        return <Home events={events} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
     }
   };
 
@@ -287,18 +239,9 @@ function App() {
         onLogout={handleLogout}
         user={user}
       />
-
-      <main className="flex-grow">
-        {renderPage()}
-      </main>
-
+      <main className="flex-grow">{renderPage()}</main>
       <Footer isAdmin={isAuthenticated} user={user} />
-
-      <LoginModal
-        isOpen={showLoginModal}
-        onClose={() => setShowLoginModal(false)}
-        onLogin={handleLogin}
-      />
+      <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} onLogin={handleLogin} />
     </div>
   );
 }
