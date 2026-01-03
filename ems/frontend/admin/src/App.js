@@ -235,9 +235,10 @@ function App() {
         return isAuthenticated ?
           <DashboardPage
             events={events || []}
-            getContacts={getContacts} // <--- Added this line
+            getContacts={getContacts}
           /> :
-          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;s
+      case 'manage':
         return isAuthenticated ?
           <ManageEventPage
             events={events || []}
