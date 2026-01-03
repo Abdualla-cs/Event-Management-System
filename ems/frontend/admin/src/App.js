@@ -1,26 +1,26 @@
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-import Header from "./components/Header.js";
-import Footer from "./components/Footer.js";
-import Home from "./pages/Home.js";
-import About from "./pages/About.js";
-import Events from "./pages/Events.js";
-import Contact from "./pages/Contact.js";
-import EventDetails from "./pages/EventDetails.js";
-import RegisterPage from "./pages/RegisterPage.js";
-import DashboardPage from "./pages/DashboardPage.js";
-import ManageEventPage from "./pages/ManageEventPage.js";
-import EditEventPage from "./pages/EditEventPage.js";
-import ContactsPage from "./pages/ContactsPage.js";
-import LoginPage from "./pages/LoginPage.js";
-import LoginModal from "./components/LoginModal.js";
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import Header from './components/Header.js';
+import Footer from './components/Footer.js';
+import Home from './pages/Home.js';
+import About from './pages/About.js';
+import Events from './pages/Events.js';
+import Contact from './pages/Contact.js';
+import EventDetails from './pages/EventDetails.js';
+import RegisterPage from './pages/RegisterPage.js';
+import DashboardPage from './pages/DashboardPage.js';
+import ManageEventPage from './pages/ManageEventPage.js';
+import EditEventPage from './pages/EditEventPage.js';
+import ContactsPage from './pages/ContactsPage.js';
+import LoginPage from './pages/LoginPage.js';
+import LoginModal from './components/LoginModal.js';
 
-const API_BASE_URL = "https://ems-backend-e1vd.onrender.com";
+const API_BASE_URL = 'https://ems-backend-e1vd.onrender.com';
 
 function App() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState('home');
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
@@ -28,29 +28,37 @@ function App() {
 
   useEffect(() => {
     checkAuth();
+    fetchEvents();
   }, []);
 
   useEffect(() => {
-    if (!loading) fetchEvents();
-  }, [isAuthenticated]);
+    window.scrollTo(0, 0);
+
+    const timer = setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [page]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [page]);
+  }, []);
 
   const checkAuth = async () => {
-    const token = localStorage.getItem("admin_token");
+    const token = localStorage.getItem('admin_token');
     if (token) {
       try {
-        const decoded = JSON.parse(atob(token.split(".")[1]));
+        // Simple token check - you might want to add a verify endpoint
+        const decoded = JSON.parse(atob(token.split('.')[1]));
         if (decoded.exp * 1000 > Date.now()) {
           setIsAuthenticated(true);
-          setUser({ email: decoded.email || "admin@yallaevent.com" });
+          setUser({ email: decoded.email || 'admin@yallaevent.com' });
         } else {
-          localStorage.removeItem("admin_token");
+          localStorage.removeItem('admin_token');
         }
-      } catch {
-        localStorage.removeItem("admin_token");
+      } catch (error) {
+        localStorage.removeItem('admin_token');
       }
     }
     setLoading(false);
@@ -58,34 +66,12 @@ function App() {
 
   const fetchEvents = async () => {
     try {
-      setLoading(true);
+      console.log('Fetching events from:', `${API_BASE_URL}/api/events`);
       const response = await axios.get(`${API_BASE_URL}/api/events`);
-
-      if (isAuthenticated) {
-        const token = localStorage.getItem("admin_token");
-
-        const eventsWithRegs = await Promise.all(
-          response.data.map(async (event) => {
-            try {
-              const regsRes = await axios.get(
-                `${API_BASE_URL}/api/events/${event.id}/registrations`,
-                {
-                  headers: { Authorization: `Bearer ${token}` },
-                }
-              );
-              return { ...event, registrations: regsRes.data || [] };
-            } catch {
-              return { ...event, registrations: [] };
-            }
-          })
-        );
-
-        setEvents(eventsWithRegs || []);
-      } else {
-        setEvents(response.data || []);
-      }
+      console.log('Events fetched:', response.data);
+      setEvents(response.data || []);
     } catch (error) {
-      console.error("Error fetching events:", error);
+      console.error('Error fetching events:', error);
       setEvents([]);
     } finally {
       setLoading(false);
@@ -94,193 +80,200 @@ function App() {
 
   const handleLogin = async (email, password) => {
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/admin/login`, {
+      const response = await axios.post(`${API_BASE_URL}/api/admin/login`, {
         email,
-        password,
+        password
       });
 
-      localStorage.setItem("admin_token", res.data.token);
+      localStorage.setItem('admin_token', response.data.token);
       setIsAuthenticated(true);
-      setUser(res.data.user);
+      setUser(response.data.user);
       setShowLoginModal(false);
       return { success: true };
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.error || "Login failed",
+        error: error.response?.data?.error || 'Login failed'
       };
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("admin_token");
+    localStorage.removeItem('admin_token');
     setIsAuthenticated(false);
     setUser(null);
-    setPage("home");
+    setPage('home');
   };
 
   const handleCreateEvent = async (formData) => {
     try {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem('admin_token');
       await axios.post(`${API_BASE_URL}/api/events`, formData, {
         headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
-        },
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        }
       });
+
       fetchEvents();
       return { success: true };
     } catch (error) {
-      return { success: false };
+      console.error('Create event error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to create event'
+      };
     }
   };
 
   const handleUpdateEvent = async (id, formData) => {
     try {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem('admin_token');
       await axios.put(`${API_BASE_URL}/api/events/${id}`, formData, {
         headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data",
-        },
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        }
       });
+
       fetchEvents();
       return { success: true };
-    } catch {
-      return { success: false };
+    } catch (error) {
+      console.error('Update event error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to update event'
+      };
     }
   };
 
   const handleDeleteEvent = async (id) => {
     try {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem('admin_token');
       await axios.delete(`${API_BASE_URL}/api/events/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` }
       });
+
       fetchEvents();
       return { success: true };
-    } catch {
-      return { success: false };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to delete event'
+      };
     }
   };
 
-  const handleRegistration = async (eventId, data) => {
+  const handleRegistration = async (eventId, registrationData) => {
     try {
-      await axios.post(`${API_BASE_URL}/api/registrations`, {
+      console.log('Registering for event:', eventId, registrationData);
+
+      const response = await axios.post(`${API_BASE_URL}/api/registrations`, {
         event_id: eventId,
-        ...data,
+        ...registrationData
       });
+
+      console.log('Registration successful:', response.data);
       return true;
-    } catch {
+    } catch (error) {
+      console.error('Registration failed:', error);
+
+      let errorMessage = 'Registration failed. Please try again.';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+
+      alert(`❌ ${errorMessage}`);
       return false;
     }
   };
 
-  const handleContactSubmit = async (data) => {
+  const handleContactSubmit = async (contactData) => {
     try {
-      await axios.post(`${API_BASE_URL}/api/contact`, data);
+      await axios.post(`${API_BASE_URL}/api/contact`, contactData);
       return true;
-    } catch {
+    } catch (error) {
+      console.error('Contact submission failed:', error);
       return false;
     }
   };
 
   const getContacts = async () => {
     try {
-      const token = localStorage.getItem("admin_token");
-      const res = await axios.get(`${API_BASE_URL}/api/contacts`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const token = localStorage.getItem('admin_token');
+      const response = await axios.get(`${API_BASE_URL}/api/contacts`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      return res.data;
-    } catch {
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
       return [];
     }
   };
 
   const renderPage = () => {
-    const selectedEvent = events.find((e) => e.id === selectedEventId);
-
     switch (page) {
-      case "home":
-        return (
-          <Home
-            events={events}
-            setPage={setPage}
-            setSelectedEventId={setSelectedEventId}
-          />
-        );
-      case "events":
-        return (
-          <Events
-            events={events}
-            setPage={setPage}
-            setSelectedEventId={setSelectedEventId}
-          />
-        );
-      case "details":
-        return (
-          <EventDetails
-            event={selectedEvent}
-            setPage={setPage}
-            isAdmin={isAuthenticated}
-          />
-        );
-      case "register":
-        return (
-          <RegisterPage
-            event={selectedEvent}
-            onSubmit={handleRegistration}
-            setPage={setPage}
-          />
-        );
-      case "manage":
-        return isAuthenticated ? (
+      case 'home':
+        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+      case 'about':
+        return <About setPage={setPage} />;
+      case 'events':
+        return <Events events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
+      case 'contact':
+        return <Contact onSubmit={handleContactSubmit} />;
+      case 'details':
+        const selectedEvent = events.find(e => e.id === selectedEventId);
+        return <EventDetails
+          event={selectedEvent}
+          setPage={setPage}
+          isAdmin={isAuthenticated}
+        />;
+      case 'register':
+        const eventToRegister = events.find(e => e.id === selectedEventId);
+        return <RegisterPage event={eventToRegister} onSubmit={handleRegistration} setPage={setPage} />;
+      case 'dashboard':
+        return isAuthenticated ? <DashboardPage events={events || []} /> : <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'manage':
+        return isAuthenticated ?
           <ManageEventPage
-            events={events}
+            events={events || []}
             setPage={setPage}
             setSelectedEventId={setSelectedEventId}
             onDelete={handleDeleteEvent}
             onCreate={handleCreateEvent}
             onUpdate={handleUpdateEvent}
-          />
-        ) : (
-          <LoginPage onLogin={handleLogin} setPage={setPage} />
-        );
-      case "edit":
-        return isAuthenticated ? (
+          /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'edit':
+        const eventToEdit = events.find(e => e.id === selectedEventId);
+        return isAuthenticated ?
           <EditEventPage
-            event={selectedEvent}
+            event={eventToEdit}
             editEvent={handleUpdateEvent}
             setPage={setPage}
-          />
-        ) : (
-          <LoginPage onLogin={handleLogin} setPage={setPage} />
-        );
-      case "contacts":
-        return isAuthenticated ? (
-          <ContactsPage getContacts={getContacts} />
-        ) : (
-          <LoginPage onLogin={handleLogin} setPage={setPage} />
-        );
-      case "about":
-        return <About setPage={setPage} />;
-      case "contact":
-        return <Contact onSubmit={handleContactSubmit} />;
+          /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'contacts':
+        return isAuthenticated ?
+          <ContactsPage getContacts={getContacts} /> :
+          <LoginPage onLogin={handleLogin} setPage={setPage} />;
+      case 'login':
+        return <LoginPage onLogin={handleLogin} setPage={setPage} />;
       default:
-        return <Home events={events} setPage={setPage} />;
+        return <Home events={events || []} setPage={setPage} setSelectedEventId={setSelectedEventId} />;
     }
   };
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#FEF1E1]">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-[#FC350B]" />
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-[#FC350B]"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#FEF1E1] flex flex-col">
+    <div className="min-h-screen bg-[#FEF1E1] text-gray-800 flex flex-col font-sans">
       <Header
         page={page}
         setPage={setPage}
@@ -290,7 +283,9 @@ function App() {
         user={user}
       />
 
-      <main className="flex-grow">{renderPage()}</main>
+      <main className="flex-grow">
+        {renderPage()}
+      </main>
 
       <Footer isAdmin={isAuthenticated} user={user} />
 
