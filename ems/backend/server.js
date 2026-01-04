@@ -1,9 +1,7 @@
 const express = require("express");
-const { Pool } = require("pg");
+const mysql = require("mysql2/promise"); // Changed from pg
 const cors = require("cors");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const jwt = require("jsonwebtoken");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
@@ -15,30 +13,44 @@ app.use(express.urlencoded({ extended: true }));
 
 /* ================= DATABASE ================= */
 
+// MySQL Connection Pool Configuration
 const poolConfig = {
-    host: process.env.PGHOST || "aws-1-ap-southeast-1.pooler.supabase.com",
-    port: parseInt(process.env.PGPORT) || 6543,
-    user: process.env.PGUSER || "postgres.bsqznbssksnecndcjzbc",
-    password: process.env.PGPASSWORD
-        ? decodeURIComponent(process.env.PGPASSWORD)
-        : "abdalla@3082006@",
-    database: process.env.PGDATABASE || "postgres",
-    ssl: { rejectUnauthorized: false, require: true },
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    host: process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER || "root",
+    password: process.env.DB_PASSWORD || "",
+    database: process.env.DB_NAME || "ems",
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+    ssl: process.env.DB_SSL ? { rejectUnauthorized: false } : false,
 };
 
-const pool = new Pool(poolConfig);
+// Create MySQL connection pool
+let pool;
 
-pool.connect()
-    .then(client => {
-        console.log("✅ Connected to Supabase");
-        client.release();
-    })
-    .catch(err => console.error("❌ DB connection error:", err));
+try {
+    pool = mysql.createPool(poolConfig);
+    console.log("✅ MySQL connection pool created");
+} catch (err) {
+    console.error("❌ MySQL pool creation error:", err);
+    process.exit(1);
+}
 
-/* ================= SUPABASE ================= */
+// Test connection
+(async () => {
+    try {
+        const connection = await pool.getConnection();
+        console.log("✅ Connected to MySQL database");
+        connection.release();
+    } catch (err) {
+        console.error("❌ MySQL connection error:", err);
+    }
+})();
+
+/* ================= SUPABASE (For Images Only) ================= */
 
 const supabaseUrl = process.env.SUPABASE_URL || "https://bsqznbssksnecndcjzbc.supabase.co";
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -69,33 +81,49 @@ const authenticateToken = (req, res, next) => {
 
 const formatEvent = event => ({
     ...event,
-    date: new Date(event.date).toISOString().split("T")[0],
+    date: event.date ? new Date(event.date).toISOString().split("T")[0] : null,
     image_url: event.image_filename || null,
     registration_count: parseInt(event.registration_count || 0),
 });
 
+// Helper function for MySQL queries
+async function executeQuery(sql, params = []) {
+    try {
+        const [rows] = await pool.execute(sql, params);
+        return rows;
+    } catch (error) {
+        console.error("MySQL Query Error:", error);
+        throw error;
+    }
+}
+
 /* ================= ROUTES ================= */
 
 app.get("/", (req, res) => {
-    res.json({ message: "Event Management System API" });
+    res.json({ message: "Event Management System API (MySQL)" });
 });
 
-app.get("/health", (req, res) => {
-    res.json({ status: "healthy" });
+app.get("/health", async (req, res) => {
+    try {
+        await pool.getConnection();
+        res.json({ status: "healthy", database: "connected" });
+    } catch (err) {
+        res.status(500).json({ status: "unhealthy", database: "disconnected" });
+    }
 });
 
 /* ================= EVENTS ================= */
 
 app.get("/api/events", async (req, res) => {
     try {
-        const result = await pool.query(`
-      SELECT e.*, COUNT(r.id) AS registration_count
-      FROM events e
-      LEFT JOIN registrations r ON e.id = r.event_id
-      GROUP BY e.id
-      ORDER BY e.date ASC
-    `);
-        res.json(result.rows.map(formatEvent));
+        const rows = await executeQuery(`
+            SELECT e.*, COUNT(r.id) AS registration_count
+            FROM events e
+            LEFT JOIN registrations r ON e.id = r.event_id
+            GROUP BY e.id
+            ORDER BY e.date ASC
+        `);
+        res.json(rows.map(formatEvent));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -105,15 +133,15 @@ app.get("/api/events/:id", async (req, res) => {
     try {
         const { id } = req.params;
 
-        const event = await pool.query("SELECT * FROM events WHERE id=$1", [id]);
-        if (!event.rows.length) return res.status(404).json({ error: "Not found" });
+        const eventRows = await executeQuery("SELECT * FROM events WHERE id = ?", [id]);
+        if (!eventRows.length) return res.status(404).json({ error: "Not found" });
 
-        const regs = await pool.query("SELECT * FROM registrations WHERE event_id=$1", [id]);
+        const regRows = await executeQuery("SELECT * FROM registrations WHERE event_id = ?", [id]);
 
         res.json({
-            ...formatEvent(event.rows[0]),
-            registrations: regs.rows,
-            registration_count: regs.rows.length,
+            ...formatEvent(eventRows[0]),
+            registrations: regRows,
+            registration_count: regRows.length,
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -141,15 +169,18 @@ app.post("/api/events", authenticateToken, upload.single("image"), async (req, r
         }
 
         const q = `
-      INSERT INTO events
-      (name, date, time, location, category, description, image_filename, max_attendees, ticket_price, status, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'upcoming',NOW())
-      RETURNING *
-    `;
-        const values = [name, date, time, location, category, description, image_filename, max_attendees, ticket_price];
-        const result = await pool.query(q, values);
+            INSERT INTO events 
+            (name, date, time, location, category, description, image_filename, max_attendees, ticket_price, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'upcoming', NOW())
+        `;
 
-        res.status(201).json(result.rows[0]);
+        const values = [name, date, time, location, category, description, image_filename, max_attendees, ticket_price];
+        const result = await executeQuery(q, values);
+
+        // Get the inserted event
+        const [insertedRows] = await pool.query("SELECT * FROM events WHERE id = LAST_INSERT_ID()");
+
+        res.status(201).json(insertedRows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
@@ -161,10 +192,10 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
     try {
         const { id } = req.params;
 
-        const current = await pool.query("SELECT image_filename FROM events WHERE id=$1", [id]);
-        if (!current.rows.length) return res.status(404).json({ error: "Not found" });
+        const currentRows = await executeQuery("SELECT image_filename FROM events WHERE id = ?", [id]);
+        if (!currentRows.length) return res.status(404).json({ error: "Not found" });
 
-        let image_filename = current.rows[0].image_filename;
+        let image_filename = currentRows[0].image_filename;
         if (req.file) {
             const ext = req.file.originalname.split(".").pop();
             const fileName = `event_${Date.now()}.${ext}`;
@@ -181,12 +212,13 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
         const ticket_price = req.body.ticket_price ? parseFloat(req.body.ticket_price) : 0;
 
         const q = `
-      UPDATE events SET
-      name=$1,date=$2,time=$3,location=$4,category=$5,
-      description=$6,image_filename=$7,max_attendees=$8,
-      ticket_price=$9,updated_at=NOW()
-      WHERE id=$10
-    `;
+            UPDATE events SET
+            name = ?, date = ?, time = ?, location = ?, category = ?,
+            description = ?, image_filename = ?, max_attendees = ?,
+            ticket_price = ?, updated_at = NOW()
+            WHERE id = ?
+        `;
+
         const values = [
             req.body.name,
             req.body.date,
@@ -199,8 +231,8 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
             ticket_price,
             id,
         ];
-        await pool.query(q, values);
 
+        await executeQuery(q, values);
         res.json({ message: "Updated" });
     } catch (err) {
         console.error(err);
@@ -211,7 +243,7 @@ app.put("/api/events/:id", authenticateToken, upload.single("image"), async (req
 /* DELETE EVENT */
 app.delete("/api/events/:id", authenticateToken, async (req, res) => {
     try {
-        await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
+        await executeQuery("DELETE FROM events WHERE id = ?", [req.params.id]);
         res.json({ message: "Deleted" });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -224,14 +256,15 @@ app.post("/api/registrations", async (req, res) => {
     try {
         const { event_id, name, email } = req.body;
 
-        const count = await pool.query("SELECT COUNT(*) FROM registrations WHERE event_id=$1", [event_id]);
-        const max = await pool.query("SELECT max_attendees FROM events WHERE id=$1", [event_id]);
+        const countRows = await executeQuery("SELECT COUNT(*) as count FROM registrations WHERE event_id = ?", [event_id]);
+        const maxRows = await executeQuery("SELECT max_attendees FROM events WHERE id = ?", [event_id]);
 
-        if (parseInt(count.rows[0].count) >= max.rows[0].max_attendees)
+        if (parseInt(countRows[0].count) >= maxRows[0].max_attendees) {
             return res.status(400).json({ error: "Event full" });
+        }
 
-        await pool.query(
-            "INSERT INTO registrations (event_id,name,email,registered_at) VALUES ($1,$2,$3,NOW())",
+        await executeQuery(
+            "INSERT INTO registrations (event_id, name, email, registered_at) VALUES (?, ?, ?, NOW())",
             [event_id, name, email]
         );
 
@@ -243,11 +276,11 @@ app.post("/api/registrations", async (req, res) => {
 
 app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => {
     try {
-        const result = await pool.query(
-            "SELECT * FROM registrations WHERE event_id=$1 ORDER BY registered_at DESC",
+        const rows = await executeQuery(
+            "SELECT * FROM registrations WHERE event_id = ? ORDER BY registered_at DESC",
             [req.params.id]
         );
-        res.json(result.rows);
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -257,32 +290,31 @@ app.get("/api/events/:id/registrations", authenticateToken, async (req, res) => 
 
 app.get("/api/admin/pending", authenticateToken, async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM events WHERE status='pending' ORDER BY date ASC");
-        res.json(result.rows);
+        const rows = await executeQuery("SELECT * FROM events WHERE status = 'pending' ORDER BY date ASC");
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-
 /* ================= STATS ================= */
 
 app.get("/api/stats", authenticateToken, async (req, res) => {
     try {
-        const totalEvents = await pool.query("SELECT COUNT(*) FROM events");
-        const upcomingEvents = await pool.query("SELECT COUNT(*) FROM events WHERE date >= CURRENT_DATE");
-        const totalRegistrations = await pool.query("SELECT COUNT(*) FROM registrations");
-        const revenue = await pool.query(`
-      SELECT SUM(e.ticket_price) AS total
-      FROM registrations r
-      JOIN events e ON r.event_id = e.id
-    `);
+        const totalEventsRows = await executeQuery("SELECT COUNT(*) as count FROM events");
+        const upcomingEventsRows = await executeQuery("SELECT COUNT(*) as count FROM events WHERE date >= CURDATE()");
+        const totalRegistrationsRows = await executeQuery("SELECT COUNT(*) as count FROM registrations");
+        const revenueRows = await executeQuery(`
+            SELECT SUM(e.ticket_price) AS total
+            FROM registrations r
+            JOIN events e ON r.event_id = e.id
+        `);
 
         res.json({
-            totalEvents: parseInt(totalEvents.rows[0].count),
-            upcomingEvents: parseInt(upcomingEvents.rows[0].count),
-            totalRegistrations: parseInt(totalRegistrations.rows[0].count),
-            totalRevenue: parseFloat(revenue.rows[0].total || 0),
+            totalEvents: parseInt(totalEventsRows[0].count),
+            upcomingEvents: parseInt(upcomingEventsRows[0].count),
+            totalRegistrations: parseInt(totalRegistrationsRows[0].count),
+            totalRevenue: parseFloat(revenueRows[0].total || 0),
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -296,8 +328,8 @@ app.post("/api/contact", async (req, res) => {
         const { name, email, message } = req.body;
         if (!name || !email || !message) return res.status(400).json({ error: "All fields are required" });
 
-        await pool.query(
-            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
+        await executeQuery(
+            "INSERT INTO contacts (name, email, message, sent_at) VALUES (?, ?, ?, NOW())",
             [name, email, message]
         );
 
@@ -309,8 +341,8 @@ app.post("/api/contact", async (req, res) => {
 
 app.get("/api/contacts", authenticateToken, async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM contacts ORDER BY sent_at DESC");
-        res.json(result.rows);
+        const rows = await executeQuery("SELECT * FROM contacts ORDER BY sent_at DESC");
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -321,12 +353,12 @@ app.get("/api/contacts", authenticateToken, async (req, res) => {
 app.post("/api/admin/login", async (req, res) => {
     const { email, password } = req.body;
 
-    const result = await pool.query(
-        "SELECT * FROM admin_users WHERE email=$1 AND password_hash=$2",
+    const rows = await executeQuery(
+        "SELECT * FROM admin_users WHERE email = ? AND password_hash = ?",
         [email, password]
     );
 
-    if (!result.rows.length) return res.status(401).json({ error: "Invalid credentials" });
+    if (!rows.length) return res.status(401).json({ error: "Invalid credentials" });
 
     const token = jwt.sign(
         { email, role: "admin" },
@@ -340,13 +372,27 @@ app.post("/api/admin/login", async (req, res) => {
 /* ================= DEBUG ================= */
 
 app.get("/debug/db", async (req, res) => {
-    const result = await pool.query("SELECT NOW(), version()");
-    res.json(result.rows[0]);
+    try {
+        const rows = await executeQuery("SELECT NOW() as now, VERSION() as version");
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /* ================= START SERVER ================= */
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT} (MySQL)`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    if (pool) {
+        await pool.end();
+        console.log('MySQL pool closed');
+    }
+    process.exit(0);
 });
