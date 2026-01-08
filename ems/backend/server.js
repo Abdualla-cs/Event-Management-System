@@ -9,7 +9,12 @@ const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -31,9 +36,72 @@ const poolConfig = {
 
 const pool = new Pool(poolConfig);
 
+// Initialize database tables
+async function initDatabase() {
+    try {
+        console.log("🔧 Checking database tables...");
+        
+        // Check and create contacts table if missing
+        const contactsCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'contacts'
+            ) as exists;
+        `);
+        
+        if (!contactsCheck.rows[0].exists) {
+            console.log("🛠 Creating missing 'contacts' table...");
+            await pool.query(`
+                CREATE TABLE contacts (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL,
+                    message TEXT NOT NULL,
+                    sent_at TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            `);
+            console.log("✅ Created 'contacts' table");
+            
+            // Test insert
+            await pool.query(
+                "INSERT INTO contacts (name, email, message) VALUES ($1, $2, $3)",
+                ['System Admin', 'admin@system.com', 'Contacts table created']
+            );
+            console.log("✅ Test record inserted into contacts");
+        } else {
+            console.log("✅ 'contacts' table exists");
+        }
+        
+        // Check other tables
+        const tables = ['events', 'registrations', 'admin_users'];
+        for (const table of tables) {
+            const check = await pool.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = $1
+                ) as exists;
+            `, [table]);
+            
+            if (check.rows[0].exists) {
+                console.log(`✅ '${table}' table exists`);
+            } else {
+                console.log(`⚠️  '${table}' table is missing`);
+            }
+        }
+        
+    } catch (err) {
+        console.error("❌ Database initialization error:", err.message);
+        console.error("Full error:", err);
+    }
+}
+
 pool.connect()
-    .then(client => {
+    .then(async client => {
         console.log("✅ Connected to Supabase");
+        await initDatabase();
         client.release();
     })
     .catch(err => console.error("❌ DB connection error:", err));
@@ -292,26 +360,91 @@ app.get("/api/stats", authenticateToken, async (req, res) => {
 /* ================= CONTACT ================= */
 
 app.post("/api/contact", async (req, res) => {
+    console.log("📨 CONTACT FORM RECEIVED - Time:", new Date().toISOString());
+    console.log("📦 Full Request Body:", JSON.stringify(req.body, null, 2));
+    console.log("📦 Content-Type Header:", req.headers['content-type']);
+    console.log("📦 Request Method:", req.method);
+    console.log("📦 Request URL:", req.url);
+    
     try {
         const { name, email, message } = req.body;
-        if (!name || !email || !message) return res.status(400).json({ error: "All fields are required" });
+        
+        console.log("📝 Parsed values:", { name, email, message });
+        
+        if (!name || !email || !message) {
+            console.log("❌ Validation failed - Missing fields");
+            return res.status(400).json({ 
+                error: "All fields are required",
+                received: { name, email, message }
+            });
+        }
 
-        await pool.query(
-            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
+        console.log("💾 Attempting to insert into contacts table...");
+        
+        // First check if table exists (double-check)
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'contacts'
+            ) as table_exists;
+        `);
+        
+        console.log("📊 Contacts table exists?", tableCheck.rows[0].table_exists);
+        
+        if (!tableCheck.rows[0].table_exists) {
+            console.log("🛠 Creating contacts table on the fly...");
+            await pool.query(`
+                CREATE TABLE contacts (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL,
+                    message TEXT NOT NULL,
+                    sent_at TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            `);
+            console.log("✅ Contacts table created");
+        }
+        
+        const result = await pool.query(
+            "INSERT INTO contacts (name, email, message, sent_at) VALUES ($1, $2, $3, NOW()) RETURNING id, name, email, sent_at",
             [name, email, message]
         );
+        
+        console.log("✅ SUCCESS - Contact inserted with ID:", result.rows[0].id);
+        console.log("✅ Inserted data:", result.rows[0]);
 
-        res.status(201).json({ success: true });
+        res.status(201).json({ 
+            success: true,
+            message: "Thank you for your message! We'll get back to you soon.",
+            data: result.rows[0]
+        });
+        
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("❌ DATABASE ERROR in contact submission:");
+        console.error("Error message:", err.message);
+        console.error("Error code:", err.code || "N/A");
+        console.error("Error detail:", err.detail || "N/A");
+        console.error("Error hint:", err.hint || "N/A");
+        console.error("Full error:", err);
+        
+        res.status(500).json({ 
+            error: "Failed to send message. Please try again.",
+            detail: err.message,
+            code: err.code
+        });
     }
 });
 
 app.get("/api/contacts", authenticateToken, async (req, res) => {
     try {
+        console.log("📨 Fetching contacts list...");
         const result = await pool.query("SELECT * FROM contacts ORDER BY sent_at DESC");
+        console.log(`✅ Found ${result.rows.length} contacts`);
         res.json(result.rows);
     } catch (err) {
+        console.error("❌ Error fetching contacts:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -344,9 +477,141 @@ app.get("/debug/db", async (req, res) => {
     res.json(result.rows[0]);
 });
 
+// NEW DEBUG ENDPOINTS FOR CONTACTS
+app.get("/api/debug/contacts-table", async (req, res) => {
+    try {
+        console.log("🔍 Checking contacts table status...");
+        
+        // Check if table exists
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'contacts'
+            ) as table_exists;
+        `);
+        
+        if (!tableCheck.rows[0].table_exists) {
+            return res.json({ 
+                status: "Table does not exist",
+                tableExists: false,
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        // Get table structure
+        const structure = await pool.query(`
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'contacts'
+            ORDER BY ordinal_position;
+        `);
+        
+        // Get row count
+        const count = await pool.query("SELECT COUNT(*) as count FROM contacts");
+        
+        // Get recent entries
+        const recent = await pool.query("SELECT * FROM contacts ORDER BY sent_at DESC LIMIT 10");
+        
+        res.json({
+            tableExists: true,
+            tableStructure: structure.rows,
+            totalContacts: parseInt(count.rows[0].count),
+            recentContacts: recent.rows,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error("Debug error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Direct test endpoint for contacts
+app.post("/api/contact/test", async (req, res) => {
+    console.log("🧪 TEST CONTACT ENDPOINT HIT");
+    console.log("Test request body:", req.body);
+    
+    try {
+        const result = await pool.query(
+            "INSERT INTO contacts (name, email, message) VALUES ($1, $2, $3) RETURNING *",
+            ['Test User', 'test@example.com', 'This is a test message from API endpoint']
+        );
+        
+        console.log("✅ Test insert successful:", result.rows[0]);
+        
+        res.json({
+            success: true,
+            message: "Test contact inserted successfully",
+            data: result.rows[0],
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error("❌ Test failed:", err);
+        res.status(500).json({ 
+            error: err.message,
+            detail: err.detail,
+            hint: err.hint
+        });
+    }
+});
+
+// Diagnostic endpoint to see what's being received
+app.post("/api/contact/debug", async (req, res) => {
+    console.log("=== DEBUG REQUEST ===");
+    console.log("Method:", req.method);
+    console.log("URL:", req.url);
+    console.log("Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("Body:", JSON.stringify(req.body, null, 2));
+    console.log("Body type:", typeof req.body);
+    console.log("=== END DEBUG ===");
+    
+    res.json({
+        received: true,
+        body: req.body,
+        headers: req.headers,
+        message: "Debug endpoint received your request",
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Check all tables in database
+app.get("/api/debug/all-tables", async (req, res) => {
+    try {
+        const tables = await pool.query(`
+            SELECT table_name, table_schema 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name;
+        `);
+        
+        const tableInfo = [];
+        for (const table of tables.rows) {
+            const count = await pool.query(`SELECT COUNT(*) FROM ${table.table_name}`);
+            tableInfo.push({
+                name: table.table_name,
+                rowCount: parseInt(count.rows[0].count)
+            });
+        }
+        
+        res.json({
+            tables: tableInfo,
+            totalTables: tables.rows.length,
+            timestamp: new Date().toISOString()
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 /* ================= START SERVER ================= */
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 API Base URL: http://localhost:${PORT}`);
+    console.log(`📧 Contact endpoint: POST http://localhost:${PORT}/api/contact`);
+    console.log(`🔍 Contact debug: GET http://localhost:${PORT}/api/debug/contacts-table`);
+    console.log(`🧪 Contact test: POST http://localhost:${PORT}/api/contact/test`);
 });
