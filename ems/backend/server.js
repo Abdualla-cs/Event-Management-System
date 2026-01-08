@@ -292,18 +292,76 @@ app.get("/api/stats", authenticateToken, async (req, res) => {
 /* ================= CONTACT ================= */
 
 app.post("/api/contact", async (req, res) => {
+    console.log("📨 === CONTACT FORM REQUEST RECEIVED ===");
+    console.log("📦 Request body:", req.body);
+    console.log("📦 Request headers:", req.headers);
+
     try {
         const { name, email, message } = req.body;
-        if (!name || !email || !message) return res.status(400).json({ error: "All fields are required" });
+        console.log("📝 Parsed fields:", { name, email, message });
 
-        await pool.query(
-            "INSERT INTO contacts (name,email,message,sent_at) VALUES ($1,$2,$3,NOW())",
+        if (!name || !email || !message) {
+            console.log("❌ Validation failed - Missing fields");
+            return res.status(400).json({ error: "All fields are required" });
+        }
+
+        console.log("🔍 Checking if contacts table exists...");
+
+        // First, let's check if the table exists
+        const tableCheck = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'contacts'
+            );
+        `);
+
+        console.log("📊 Contacts table exists?", tableCheck.rows[0].exists);
+
+        if (!tableCheck.rows[0].exists) {
+            console.log("🛠 Creating contacts table...");
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL,
+                    message TEXT NOT NULL,
+                    sent_at TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            `);
+            console.log("✅ Contacts table created");
+        }
+
+        console.log("💾 Attempting to insert contact data...");
+        console.log("📤 Inserting:", { name, email, message });
+
+        const result = await pool.query(
+            "INSERT INTO contacts (name, email, message, sent_at) VALUES ($1, $2, $3, NOW()) RETURNING *",
             [name, email, message]
         );
 
-        res.status(201).json({ success: true });
+        console.log("✅ SUCCESS - Contact saved:", result.rows[0]);
+        console.log("📊 New contact ID:", result.rows[0].id);
+
+        res.status(201).json({
+            success: true,
+            message: "Message sent successfully",
+            contact: result.rows[0]
+        });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("❌ ERROR in contact submission:");
+        console.error("🔴 Error message:", err.message);
+        console.error("🔴 Error code:", err.code);
+        console.error("🔴 Error detail:", err.detail);
+        console.error("🔴 Full error:", err);
+
+        res.status(500).json({
+            error: err.message,
+            detail: err.detail || "Failed to save contact message",
+            code: err.code
+        });
     }
 });
 
